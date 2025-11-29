@@ -1,6 +1,7 @@
 import { startApi } from "@/app/api/api";
 import { log } from "@/utils/log";
 import { awaitShutdown, onShutdown } from "@/utils/shutdown";
+import { validateEnv } from "@/utils/validateEnv";
 import { db } from './storage/db';
 import { startTimeout } from "./app/presence/timeout";
 import { redis } from "./storage/redis";
@@ -13,6 +14,9 @@ import { initGithub } from "./modules/github";
 import { loadFiles } from "./storage/files";
 
 async function main() {
+
+    // Validate environment variables before any service initialization
+    validateEnv();
 
     // Storage
     await db.$connect();

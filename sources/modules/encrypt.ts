@@ -1,5 +1,10 @@
 import { KeyTree, crypto } from "privacy-kit";
 
+// Helper to cast Uint8Array to the type Prisma expects (TypeScript 5.x strict typing)
+function toBytes(data: Uint8Array): Uint8Array<ArrayBuffer> {
+    return data as Uint8Array<ArrayBuffer>;
+}
+
 let keyTree: KeyTree | null = null;
 
 export async function initEncrypt() {
@@ -9,12 +14,12 @@ export async function initEncrypt() {
     }));
 }
 
-export function encryptString(path: string[], string: string) {
-    return keyTree!.symmetricEncrypt(path, string);
+export function encryptString(path: string[], string: string): Uint8Array<ArrayBuffer> {
+    return toBytes(keyTree!.symmetricEncrypt(path, string));
 }
 
-export function encryptBytes(path: string[], bytes: Uint8Array) {
-    return keyTree!.symmetricEncrypt(path, bytes);
+export function encryptBytes(path: string[], bytes: Uint8Array): Uint8Array<ArrayBuffer> {
+    return toBytes(keyTree!.symmetricEncrypt(path, bytes));
 }
 
 export function decryptString(path: string[], encrypted: Uint8Array) {

@@ -7,6 +7,11 @@ import { randomKeyNaked } from "@/utils/randomKeyNaked";
 import { Socket } from "socket.io";
 import * as privacyKit from "privacy-kit";
 
+// Helper to cast Uint8Array to the type Prisma expects (TypeScript 5.x strict typing)
+function toBytes(data: Uint8Array): Uint8Array<ArrayBuffer> {
+    return data as Uint8Array<ArrayBuffer>;
+}
+
 export function artifactUpdateHandler(userId: string, socket: Socket) {
     // Read artifact with full body
     socket.on('artifact-read', async (data: {
@@ -309,11 +314,11 @@ export function artifactUpdateHandler(userId: string, socket: Socket) {
                 data: {
                     id,
                     accountId: userId,
-                    header: privacyKit.decodeBase64(header),
+                    header: toBytes(privacyKit.decodeBase64(header)),
                     headerVersion: 1,
-                    body: privacyKit.decodeBase64(body),
+                    body: toBytes(privacyKit.decodeBase64(body)),
                     bodyVersion: 1,
-                    dataEncryptionKey: privacyKit.decodeBase64(dataEncryptionKey),
+                    dataEncryptionKey: toBytes(privacyKit.decodeBase64(dataEncryptionKey)),
                     seq: 0
                 }
             });

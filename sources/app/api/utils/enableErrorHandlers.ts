@@ -1,6 +1,33 @@
 import { log } from "@/utils/log";
 import { Fastify } from "../types";
 
+// Type guard to check if an error has Fastify error properties
+function isFastifyError(error: unknown): error is { statusCode?: number; code?: string; stack?: string; name?: string; message?: string } {
+    return typeof error === 'object' && error !== null;
+}
+
+// Safely get error message
+function getErrorMessage(error: unknown): string {
+    if (error instanceof Error) return error.message;
+    if (isFastifyError(error) && error.message) return error.message;
+    return 'Unknown error';
+}
+
+// Safely get error properties
+function getErrorProps(error: unknown): { statusCode: number; code?: string; stack?: string; name?: string; message: string } {
+    const message = getErrorMessage(error);
+    if (isFastifyError(error)) {
+        return {
+            statusCode: error.statusCode || 500,
+            code: error.code,
+            stack: error.stack,
+            name: error.name,
+            message
+        };
+    }
+    return { statusCode: 500, message };
+}
+
 export function enableErrorHandlers(app: Fastify) {
     // Global error handler
     app.setErrorHandler(async (error, request, reply) => {
@@ -8,6 +35,7 @@ export function enableErrorHandlers(app: Fastify) {
         const url = request.url;
         const userAgent = request.headers['user-agent'] || 'unknown';
         const ip = request.ip || 'unknown';
+        const errorProps = getErrorProps(error);
 
         // Log the error with comprehensive context
         log({
@@ -17,13 +45,13 @@ export function enableErrorHandlers(app: Fastify) {
             url,
             userAgent,
             ip,
-            statusCode: error.statusCode || 500,
-            errorCode: error.code,
-            stack: error.stack
-        }, `Unhandled error: ${error.message}`);
+            statusCode: errorProps.statusCode,
+            errorCode: errorProps.code,
+            stack: errorProps.stack
+        }, `Unhandled error: ${errorProps.message}`);
 
         // Return appropriate error response
-        const statusCode = error.statusCode || 500;
+        const statusCode = errorProps.statusCode;
 
         if (statusCode >= 500) {
             // Internal server errors - don't expose details
@@ -35,8 +63,8 @@ export function enableErrorHandlers(app: Fastify) {
         } else {
             // Client errors - can expose more details
             return reply.code(statusCode).send({
-                error: error.name || 'Error',
-                message: error.message || 'An error occurred',
+                error: errorProps.name || 'Error',
+                message: errorProps.message,
                 statusCode
             });
         }
@@ -53,6 +81,7 @@ export function enableErrorHandlers(app: Fastify) {
         const method = request.method;
         const url = request.url;
         const duration = (Date.now() - (request.startTime || Date.now())) / 1000;
+        const hookErrorProps = getErrorProps(error);
 
         log({
             module: 'fastify-hook-error',
@@ -60,27 +89,28 @@ export function enableErrorHandlers(app: Fastify) {
             method,
             url,
             duration,
-            statusCode: reply.statusCode || error.statusCode || 500,
-            errorName: error.name,
-            errorCode: error.code
-        }, `Request error: ${error.message}`);
+            statusCode: reply.statusCode || hookErrorProps.statusCode,
+            errorName: hookErrorProps.name,
+            errorCode: hookErrorProps.code
+        }, `Request error: ${hookErrorProps.message}`);
     });
 
     // Handle uncaught exceptions in routes
     app.addHook('preHandler', async (request, reply) => {
         // Store original reply.send to catch errors in response serialization
         const originalSend = reply.send.bind(reply);
-        reply.send = function (payload: any) {
+        reply.send = function (payload: unknown) {
             try {
                 return originalSend(payload);
-            } catch (error: any) {
+            } catch (error: unknown) {
+                const serErrorProps = getErrorProps(error);
                 log({
                     module: 'fastify-serialization-error',
                     level: 'error',
                     method: request.method,
                     url: request.url,
-                    stack: error.stack
-                }, `Response serialization error: ${error.message}`);
+                    stack: serErrorProps.stack
+                }, `Response serialization error: ${serErrorProps.message}`);
                 throw error;
             }
         };

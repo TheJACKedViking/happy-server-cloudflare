@@ -7,6 +7,11 @@ import { allocateUserSeq } from "@/storage/seq";
 import { log } from "@/utils/log";
 import * as privacyKit from "privacy-kit";
 
+// Helper to cast Uint8Array to the type Prisma expects (TypeScript 5.x strict typing)
+function toBytes(data: Uint8Array): Uint8Array<ArrayBuffer> {
+    return data as Uint8Array<ArrayBuffer>;
+}
+
 export function artifactsRoutes(app: Fastify) {
     // GET /v1/artifacts - List all artifacts for the account
     app.get('/v1/artifacts', {
@@ -189,11 +194,11 @@ export function artifactsRoutes(app: Fastify) {
                 data: {
                     id,
                     accountId: userId,
-                    header: privacyKit.decodeBase64(header),
+                    header: toBytes(privacyKit.decodeBase64(header)),
                     headerVersion: 1,
-                    body: privacyKit.decodeBase64(body),
+                    body: toBytes(privacyKit.decodeBase64(body)),
                     bodyVersion: 1,
-                    dataEncryptionKey: privacyKit.decodeBase64(dataEncryptionKey),
+                    dataEncryptionKey: toBytes(privacyKit.decodeBase64(dataEncryptionKey)),
                     seq: 0
                 }
             });

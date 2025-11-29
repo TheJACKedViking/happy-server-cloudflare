@@ -5,6 +5,16 @@ import { randomKeyNaked } from "@/utils/randomKeyNaked";
 import { eventRouter, buildKVBatchUpdateUpdate } from "@/app/events/eventRouter";
 import * as privacyKit from "privacy-kit";
 
+// Helper to cast Uint8Array to the type Prisma expects (TypeScript 5.x strict typing)
+function toBytes(data: Uint8Array): Uint8Array<ArrayBuffer> {
+    return data as Uint8Array<ArrayBuffer>;
+}
+
+// Helper to safely convert base64 to bytes, returning null if input is null
+function toBytesOrNull(base64: string | null): Uint8Array<ArrayBuffer> | null {
+    return base64 ? toBytes(privacyKit.decodeBase64(base64)) : null;
+}
+
 export interface KVMutation {
     key: string;
     value: string | null; // null = delete (sets value to null but keeps record)
@@ -106,7 +116,7 @@ export async function kvMutate(
                         }
                     },
                     data: {
-                        value: mutation.value ? privacyKit.decodeBase64(mutation.value) : null,
+                        value: toBytesOrNull(mutation.value),
                         version: newVersion
                     }
                 });

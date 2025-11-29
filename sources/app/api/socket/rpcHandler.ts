@@ -1,9 +1,33 @@
 import { eventRouter } from "@/app/events/eventRouter";
 import { log } from "@/utils/log";
 import { Socket } from "socket.io";
+import { randomUUID } from "crypto";
+
+// Track pending RPC requests for cancellation support
+// Key: requestId, Value: { targetSocket, method }
+const pendingRequests = new Map<string, { targetSocket: Socket; method: string }>();
 
 export function rpcHandler(userId: string, socket: Socket, rpcListeners: Map<string, Socket>) {
-    
+
+    // RPC cancel - Cancel an in-flight RPC request (from app to server)
+    socket.on('rpc-cancel', async (data: { requestId: string }) => {
+        try {
+            const { requestId } = data;
+            if (!requestId || typeof requestId !== 'string') {
+                return;
+            }
+
+            const pending = pendingRequests.get(requestId);
+            if (pending && pending.targetSocket.connected) {
+                // Forward cancellation to the target CLI socket
+                pending.targetSocket.emit('rpc-cancel', { requestId, method: pending.method });
+            }
+            pendingRequests.delete(requestId);
+        } catch (error) {
+            log({ module: 'websocket', level: 'error' }, `Error in rpc-cancel: ${error}`);
+        }
+    });
+
     // RPC register - Register this socket as a listener for an RPC method
     socket.on('rpc-register', async (data: any) => {
         try {
@@ -65,6 +89,9 @@ export function rpcHandler(userId: string, socket: Socket, rpcListeners: Map<str
 
     // RPC call - Call an RPC method on another socket of the same user
     socket.on('rpc-call', async (data: any, callback: (response: any) => void) => {
+        // Generate unique request ID for cancellation tracking
+        const requestId = randomUUID();
+
         try {
             const { method, params } = data;
 
@@ -102,6 +129,9 @@ export function rpcHandler(userId: string, socket: Socket, rpcListeners: Map<str
                 return;
             }
 
+            // Track the pending request for cancellation support
+            pendingRequests.set(requestId, { targetSocket, method });
+
             // Log RPC call initiation
             const startTime = Date.now();
             // log({ module: 'websocket-rpc' }, `RPC call initiated: ${socket.id} -> ${method} (target: ${targetSocket.id})`);
@@ -109,9 +139,13 @@ export function rpcHandler(userId: string, socket: Socket, rpcListeners: Map<str
             // Forward the RPC request to the target socket using emitWithAck
             try {
                 const response = await targetSocket.timeout(30000).emitWithAck('rpc-request', {
+                    requestId,
                     method,
                     params
                 });
+
+                // Clean up tracking on success
+                pendingRequests.delete(requestId);
 
                 const duration = Date.now() - startTime;
                 // log({ module: 'websocket-rpc' }, `RPC call succeeded: ${method} (${duration}ms)`);
@@ -120,29 +154,46 @@ export function rpcHandler(userId: string, socket: Socket, rpcListeners: Map<str
                 if (callback) {
                     callback({
                         ok: true,
-                        result: response
+                        result: response,
+                        requestId
                     });
                 }
 
             } catch (error) {
                 const duration = Date.now() - startTime;
                 const errorMsg = error instanceof Error ? error.message : 'RPC call failed';
+                const isTimeout = errorMsg.includes('timeout') || errorMsg.includes('Timeout');
+
+                // On timeout, send cancellation to the target CLI
+                if (isTimeout && targetSocket.connected) {
+                    targetSocket.emit('rpc-cancel', { requestId, method });
+                }
+
+                // Clean up tracking
+                pendingRequests.delete(requestId);
+
                 // log({ module: 'websocket-rpc' }, `RPC call failed: ${method} - ${errorMsg} (${duration}ms)`);
 
                 // Timeout or error occurred
                 if (callback) {
                     callback({
                         ok: false,
-                        error: errorMsg
+                        error: errorMsg,
+                        requestId,
+                        cancelled: isTimeout
                     });
                 }
             }
         } catch (error) {
+            // Clean up tracking on unexpected error
+            pendingRequests.delete(requestId);
+
             // log({ module: 'websocket', level: 'error' }, `Error in rpc-call: ${error}`);
             if (callback) {
                 callback({
                     ok: false,
-                    error: 'Internal error'
+                    error: 'Internal error',
+                    requestId
                 });
             }
         }
@@ -166,5 +217,15 @@ export function rpcHandler(userId: string, socket: Socket, rpcListeners: Map<str
             rpcListeners.delete(userId);
             // log({ module: 'websocket-rpc' }, `All RPC listeners removed for user ${userId}`);
         }
+
+        // Clean up pending requests where this socket was the target
+        // This prevents memory leaks when CLI disconnects while requests are in flight
+        const requestsToCleanup: string[] = [];
+        for (const [requestId, pending] of pendingRequests.entries()) {
+            if (pending.targetSocket === socket) {
+                requestsToCleanup.push(requestId);
+            }
+        }
+        requestsToCleanup.forEach(id => pendingRequests.delete(id));
     });
 }
