@@ -1,12 +1,21 @@
 node_modules
-.env
 dist
 .pgdata
 .minio
 
-.env.local
+# Environment variables (all env files except examples/templates checked into repo)
 .env
+.env.local
+.env.*.local
+.env.production
 
+# Keep example templates
+!.env.example
+!.env.dev
+!.env.staging
+
+# Debug logs
 .logs/
 
+# Claude configuration
 .claude/

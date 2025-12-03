@@ -40,6 +40,38 @@ This document contains the development guidelines and instructions for the Happy
 - PostgreSQL database
 - Redis (for event bus and caching)
 
+### Environment Variables & Secrets
+
+This project follows a consistent pattern for environment files:
+
+| File | Purpose | Committed to Git |
+|------|---------|------------------|
+| `.env.example` | Template with all variables and descriptions | Yes |
+| `.env.dev` | Local development with safe defaults | Yes |
+| `.env.staging` | Staging environment template | Yes |
+| `.env` | Active environment (copied from template) | No |
+| `.env.local` | Local overrides | No |
+| `.env.production` | Production values | No |
+
+**Required Variables:**
+- `DATABASE_URL` - PostgreSQL connection string
+- `REDIS_URL` - Redis connection for pub/sub
+- `HANDY_MASTER_SECRET` - Master encryption key (generate with `openssl rand -hex 32`)
+- `S3_*` - S3/MinIO storage configuration
+
+**Optional Variables:**
+- `ELEVENLABS_API_KEY` - Voice synthesis
+- `GITHUB_*` - GitHub OAuth integration
+
+**Generating Secrets:**
+```bash
+./scripts/generate-secrets.sh
+./scripts/generate-secrets.sh --env production
+```
+
+**Secret Rotation:**
+See `docs/SECRET-ROTATION.md` for comprehensive rotation procedures.
+
 ## Code Style and Structure
 
 ### General Principles
