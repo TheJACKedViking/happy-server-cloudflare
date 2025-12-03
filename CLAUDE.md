@@ -31,7 +31,7 @@ This is a serverless implementation of Happy Server, designed to run on Cloudfla
 | Framework | Fastify | Hono |
 | Database | PostgreSQL + Prisma | D1 + Drizzle ORM |
 | WebSockets | Socket.io | Durable Objects (future) |
-| File Storage | MinIO/S3 | R2 (future) |
+| File Storage | MinIO/S3 | R2 |
 | Deployment | Traditional server | Serverless edge |
 
 ## Development Workflow
@@ -323,7 +323,7 @@ This Workers implementation is Phase 1 of migrating from happy-server. Future ph
 - **Phase 2**: Database migration (PostgreSQL → D1)
 - **Phase 3**: API routes migration
 - **Phase 4**: WebSocket/real-time (Durable Objects)
-- **Phase 5**: File storage (R2)
+- **Phase 5**: File storage (R2) - IMPLEMENTED (HAP-5)
 - **Phase 6**: Testing and production deployment
 
 ## Common Patterns
@@ -1970,6 +1970,216 @@ yarn test src/durable-objects/
 - `src/durable-objects/index.ts` - Exports
 - `src/routes/websocket.ts` - HTTP routes for WebSocket upgrade
 - `wrangler.toml` - DO bindings configuration
+
+## R2 Storage (HAP-5)
+
+### Overview
+
+File storage is implemented using Cloudflare R2 (S3-compatible object storage). The implementation provides:
+- File upload/download with authentication
+- Support for avatars, documents, and general files
+- Proper content-type validation
+- Size limits per category
+- Integration with D1 database for file metadata
+
+### Configuration
+
+R2 bucket is configured in `wrangler.toml`:
+
+```toml
+# Development
+[[env.dev.r2_buckets]]
+binding = "UPLOADS"
+bucket_name = "happy-dev-uploads"
+
+# Production
+[[env.prod.r2_buckets]]
+binding = "UPLOADS"
+bucket_name = "happy-prod-uploads"
+```
+
+### Storage Abstraction
+
+**Location:** `src/storage/r2.ts`
+
+The R2Storage class provides typed utilities for file operations:
+
+```typescript
+import { createR2Storage } from '@/storage/r2';
+
+const r2 = createR2Storage(c.env.UPLOADS);
+
+// Upload a file
+const result = await r2.upload(path, body, metadata);
+
+// Upload an avatar (with image validation)
+const avatar = await r2.uploadAvatar(userId, body, 'image/jpeg', 'photo.jpg');
+
+// Download a file
+const file = await r2.get(path);
+
+// Delete a file
+await r2.delete(path);
+```
+
+### Supported File Types
+
+**Images:**
+- `image/jpeg`, `image/png`, `image/gif`, `image/webp`, `image/svg+xml`
+
+**Documents:**
+- `application/pdf`, `text/plain`, `application/json`, `text/markdown`
+
+### Size Limits
+
+| Category | Max Size |
+|----------|----------|
+| Avatar | 5 MB |
+| Document | 50 MB |
+| General | 100 MB |
+
+### Upload Routes
+
+**Location:** `src/routes/uploads.ts`
+
+All routes require authentication (Bearer token).
+
+#### POST /v1/uploads - Upload File
+
+Upload a file to R2 storage.
+
+**Request:** `multipart/form-data`
+- `file`: File content (required)
+- `category`: `avatars` | `documents` | `files` (optional, default: `files`)
+- `reuseKey`: Deduplication key (optional)
+
+**Response (200):**
+```json
+{
+    "success": true,
+    "file": {
+        "id": "clm8z0xyz000008l5g1h9e2ab",
+        "path": "documents/user123/clm8z0xyz000008l5g1h9e2ab.pdf",
+        "originalName": "document.pdf",
+        "contentType": "application/pdf",
+        "size": 245678,
+        "createdAt": 1705010400000,
+        "updatedAt": 1705010400000
+    }
+}
+```
+
+#### GET /v1/uploads - List Files
+
+List uploaded files for the authenticated user.
+
+**Query Parameters:**
+- `category`: Filter by category (optional)
+- `limit`: Max results (1-200, default: 50)
+- `cursor`: Pagination cursor (optional)
+
+#### GET /v1/uploads/:id - Get File Metadata
+
+Get metadata for a specific file.
+
+#### GET /v1/uploads/:id/download - Download File
+
+Download file content. Returns the file with appropriate Content-Type header.
+
+#### DELETE /v1/uploads/:id - Delete File
+
+Delete an uploaded file from both R2 and the database.
+
+#### POST /v1/uploads/avatar - Upload Avatar
+
+Convenience endpoint for avatar uploads. Automatically:
+- Validates image type (JPEG, PNG, GIF, WebP only)
+- Enforces 5MB size limit
+- Replaces existing avatar (using `profile-avatar` reuseKey)
+
+**Request:** `multipart/form-data`
+- `file`: Image file (required)
+
+**Response (200):**
+```json
+{
+    "success": true,
+    "avatar": {
+        "id": "clm8z0xyz000008l5g1h9e2ab",
+        "path": "avatars/user123/clm8z0xyz000008l5g1h9e2ab.jpg",
+        "contentType": "image/jpeg",
+        "size": 102400
+    }
+}
+```
+
+### Database Schema
+
+The `uploadedFiles` table stores file metadata:
+
+```typescript
+uploadedFiles = sqliteTable('UploadedFile', {
+    id: text('id').primaryKey(),
+    accountId: text('accountId').notNull(),
+    path: text('path').notNull(),           // R2 storage path
+    width: integer('width'),                 // Image dimensions
+    height: integer('height'),
+    thumbhash: text('thumbhash'),           // Placeholder image
+    reuseKey: text('reuseKey'),             // Deduplication key
+    createdAt: integer('createdAt', { mode: 'timestamp_ms' }),
+    updatedAt: integer('updatedAt', { mode: 'timestamp_ms' }),
+});
+```
+
+### Usage Examples
+
+#### Upload Avatar from Frontend
+
+```typescript
+const formData = new FormData();
+formData.append('file', imageFile);
+
+const response = await fetch('https://api.example.com/v1/uploads/avatar', {
+    method: 'POST',
+    headers: {
+        'Authorization': `Bearer ${token}`,
+    },
+    body: formData,
+});
+
+const { avatar } = await response.json();
+console.log('Avatar uploaded:', avatar.path);
+```
+
+#### Upload Document
+
+```typescript
+const formData = new FormData();
+formData.append('file', pdfFile);
+formData.append('category', 'documents');
+
+const response = await fetch('https://api.example.com/v1/uploads', {
+    method: 'POST',
+    headers: {
+        'Authorization': `Bearer ${token}`,
+    },
+    body: formData,
+});
+
+const { file } = await response.json();
+```
+
+#### Download File
+
+```typescript
+const response = await fetch(`https://api.example.com/v1/uploads/${fileId}/download`, {
+    headers: {
+        'Authorization': `Bearer ${token}`,
+    },
+});
+
+const blob = await response.blob();
+```
 
 ## Resources
 

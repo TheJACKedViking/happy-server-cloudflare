@@ -3,17 +3,12 @@ main = "src/index.ts"
 compatibility_date = "2025-01-08"
 compatibility_flags = ["nodejs_compat"]
 
-# Cloudflare Account ID: 81f483e6767ea3194467ecef42840f79
+# Cloudflare Account ID
 account_id = "81f483e6767ea3194467ecef42840f79"
 
 # Enable Node.js compatibility for process.env and other Node APIs
 [build]
 command = ""
-
-# Local development settings
-[dev]
-port = 8787
-local_protocol = "http"
 
 #############################
 # Development Environment

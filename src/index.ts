@@ -19,6 +19,7 @@ import voiceRoutes from '@/routes/voice';
 import kvRoutes from '@/routes/kv';
 import pushRoutes from '@/routes/push';
 import websocketRoutes from '@/routes/websocket';
+import uploadRoutes from '@/routes/uploads';
 
 // Export Durable Object classes for Cloudflare Workers
 // These must be exported from the main entry point for Wrangler to detect them
@@ -61,6 +62,12 @@ interface Env {
      * @required for WebSocket functionality (HAP-16)
      */
     CONNECTION_MANAGER: DurableObjectNamespace;
+
+    /**
+     * R2 bucket for file uploads
+     * @required for file storage functionality (HAP-5)
+     */
+    UPLOADS: R2Bucket;
 }
 
 /**
@@ -122,6 +129,9 @@ app.route('/', pushRoutes);
 // Mount WebSocket routes (HAP-16: Durable Objects foundation)
 // These routes handle WebSocket upgrades and forward to ConnectionManager DO
 app.route('/', websocketRoutes);
+
+// Mount file upload routes (HAP-5: R2 Storage)
+app.route('/', uploadRoutes);
 
 // Mount test routes
 app.route('/test', testRoutes);
