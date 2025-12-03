@@ -6,7 +6,7 @@ import { createToken } from '@/lib/auth';
 import { getDb } from '@/db/client';
 import { schema } from '@/db/schema';
 import { eq } from 'drizzle-orm';
-import { createId } from '@paralleldrive/cuid2';
+import { createId } from '@/utils/id';
 import { authMiddleware, type AuthVariables } from '@/middleware/auth';
 import type { Context } from 'hono';
 import {

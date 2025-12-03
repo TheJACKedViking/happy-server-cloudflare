@@ -7,7 +7,7 @@
  * @module storage/r2
  */
 
-import { createId } from '@paralleldrive/cuid2';
+import { createId } from '@/utils/id';
 
 /**
  * Supported file types for upload validation

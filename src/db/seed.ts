@@ -5,7 +5,7 @@
  * Run with: yarn db:seed
  */
 
-import { createId } from '@paralleldrive/cuid2';
+import { createId } from '@/utils/id';
 
 /**
  * Generate mock encrypted data (for Bytes fields)

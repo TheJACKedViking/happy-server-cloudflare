@@ -392,7 +392,7 @@ The database has been migrated from Prisma/PostgreSQL to Drizzle ORM/D1 (Cloudfl
 | `DateTime` | `integer({ mode: 'timestamp_ms' })` | Unix timestamps in ms |
 | `BigInt` | `integer()` | SQLite 64-bit integers |
 | `Boolean` | `integer({ mode: 'boolean' })` | 0 = false, 1 = true |
-| `cuid()` default | Application layer | Use `@paralleldrive/cuid2` |
+| `cuid()` default | Application layer | Use `@/utils/id` (Worker-safe) |
 | `@updatedAt` | `$onUpdate(() => new Date())` | Drizzle auto-update |
 | Enum types | `text()` + CHECK constraint | SQL-level validation |
 
@@ -432,7 +432,7 @@ yarn db:compare
    - SQLite doesn't support `@@id` directive like Prisma
 
 4. **ID Generation**
-   - Prisma `@default(cuid())` → Application-layer using `createId()` from `@paralleldrive/cuid2`
+   - Prisma `@default(cuid())` → Application-layer using `createId()` from `@/utils/id` (Worker-safe)
    - No database-level default for IDs
 
 5. **Encryption Fields**
@@ -482,7 +482,7 @@ export default {
 
 #### Insert with Generated ID
 ```typescript
-import { createId } from '@paralleldrive/cuid2';
+import { createId } from '@/utils/id';
 import { getDb } from '@/db/client';
 import { schema } from '@/db/schema';
 

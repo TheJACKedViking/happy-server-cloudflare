@@ -3,7 +3,7 @@ import type { Context } from 'hono';
 import { authMiddleware, type AuthVariables } from '@/middleware/auth';
 import { getDb } from '@/db/client';
 import { schema } from '@/db/schema';
-import { createId } from '@paralleldrive/cuid2';
+import { createId } from '@/utils/id';
 import { eq, and } from 'drizzle-orm';
 import {
     GitHubOAuthParamsResponseSchema,
@@ -144,9 +144,7 @@ const githubOAuthCallbackRoute = createRoute({
 });
 
 connectRoutes.openapi(githubOAuthCallbackRoute, async (c) => {
-    // Extract query params but don't use them yet - placeholder for OAuth flow
-    const _query = c.req.valid('query');
-
+    // Query params available via c.req.valid('query') when implementing OAuth flow
     // TODO: Implement full OAuth flow
     // 1. Verify state token
     // 2. Exchange code for access token
