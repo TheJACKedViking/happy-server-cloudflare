@@ -586,6 +586,18 @@ export class ConnectionManager extends DurableObject<ConnectionManagerEnv> {
             case 'exclude':
                 return metadata.connectionId !== filter.connectionId;
 
+            case 'all-interested-in-session':
+                // Send to session-scoped connections with matching session + all user-scoped connections
+                // Machine-scoped connections don't receive session updates
+                if (metadata.clientType === 'session-scoped') {
+                    return metadata.sessionId === filter.sessionId;
+                }
+                if (metadata.clientType === 'machine-scoped') {
+                    return false;
+                }
+                // user-scoped connections always get session updates
+                return true;
+
             default:
                 return true;
         }
