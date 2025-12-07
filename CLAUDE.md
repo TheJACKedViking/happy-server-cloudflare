@@ -109,15 +109,45 @@ Access the development server:
 - File and function names should match for utilities
 - Test files use `.spec.ts` suffix
 
-## Environment Variables
+## Environment Variables & Secrets
 
-### Local Development
+**See `docs/SECRETS.md` for comprehensive secrets management documentation.**
+
+### Quick Start
+
+1. Copy the template:
+   ```bash
+   cp .dev.vars.example .dev.vars
+   ```
+
+2. Generate a master secret:
+   ```bash
+   openssl rand -hex 32
+   ```
+
+3. Add it to `.dev.vars`:
+   ```bash
+   HANDY_MASTER_SECRET=your-generated-secret-here
+   ```
+
+4. Start development:
+   ```bash
+   yarn dev
+   ```
+
+### Required Secrets
+
+| Secret | Purpose | Generation |
+|--------|---------|------------|
+| `HANDY_MASTER_SECRET` | Auth token generation | `openssl rand -hex 32` |
+
+### Local Development (.dev.vars)
 
 Environment variables for local development are stored in `.dev.vars`:
 
 ```bash
 ENVIRONMENT=development
-# Add more variables as needed
+HANDY_MASTER_SECRET=your-32-byte-hex-secret
 ```
 
 ⚠️ **IMPORTANT**: Never commit `.dev.vars` to version control - it's gitignored by default.
@@ -129,26 +159,36 @@ In Workers, access environment variables via the context:
 ```typescript
 app.get('/example', (c) => {
     const env = c.env.ENVIRONMENT;
+    const secret = c.env.HANDY_MASTER_SECRET; // Required
     return c.json({ env });
 });
 ```
 
 **NOT** via `process.env` (that's Node.js specific).
 
-### Production Secrets
+### Production Secrets (Wrangler)
 
-For production, use Wrangler secrets:
+For production, use Wrangler secrets (never put secrets in `wrangler.toml`):
 
 ```bash
-# Set a secret
-wrangler secret put SECRET_NAME
+# Set required secret for production
+wrangler secret put HANDY_MASTER_SECRET --env prod
 
-# List secrets
-wrangler secret list
+# Set required secret for development (remote)
+wrangler secret put HANDY_MASTER_SECRET --env dev
+
+# List all secrets
+wrangler secret list --env prod
 
 # Delete a secret
-wrangler secret delete SECRET_NAME
+wrangler secret delete SECRET_NAME --env prod
 ```
+
+### Secret Rotation
+
+See `happy-server/docs/SECRET-ROTATION.md` for detailed rotation procedures.
+
+**Warning:** Rotating `HANDY_MASTER_SECRET` invalidates all existing auth tokens.
 
 ## Middleware
 

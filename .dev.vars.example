@@ -1,0 +1,57 @@
+# Happy Server Workers - Local Development Environment Variables
+# ============================================================
+#
+# Copy this file to .dev.vars for local development:
+#   cp .dev.vars.example .dev.vars
+#
+# .dev.vars is loaded automatically by `wrangler dev`
+# NEVER commit .dev.vars (it's gitignored)
+#
+# For production, use Cloudflare Secrets:
+#   wrangler secret put HANDY_MASTER_SECRET --env prod
+#
+# To generate secrets, run from happy-server/:
+#   ./scripts/generate-secrets.sh
+#
+# ============================================================
+
+# Environment identifier
+# Values: development | staging | production
+ENVIRONMENT=development
+
+# ============================================================
+# REQUIRED SECRETS
+# ============================================================
+
+# Master secret for authentication token generation
+# Generate with: openssl rand -hex 32
+# WARNING: Changing this invalidates ALL existing auth tokens
+HANDY_MASTER_SECRET=your-32-byte-hex-secret-here
+
+# ============================================================
+# OPTIONAL SECRETS
+# ============================================================
+
+# ElevenLabs API key for voice synthesis features
+# Get from: https://elevenlabs.io/app/settings/api-keys
+# ELEVENLABS_API_KEY=
+
+# GitHub OAuth Client Secret (for GitHub login)
+# Get from: GitHub Developer Settings > OAuth Apps
+# GITHUB_CLIENT_SECRET=
+
+# GitHub Webhook Secret (for webhook signature verification)
+# Generate with: openssl rand -hex 32
+# GITHUB_WEBHOOK_SECRET=
+
+# CORS origins (comma-separated)
+# Default: * in development
+# CORS_ORIGINS=http://localhost:3000,http://localhost:8081
+
+# ============================================================
+# TEST SECRETS (for running tests locally)
+# ============================================================
+
+# Test auth secret for privacy-kit integration tests
+# Can be any random string for local testing
+TEST_AUTH_SECRET=test-secret-for-local-development-only
