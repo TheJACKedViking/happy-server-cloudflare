@@ -14,6 +14,7 @@ import {
     type SupportedFileType,
     type SupportedImageType,
 } from '@/storage/r2';
+import { processImage, isProcessableImage } from '@/lib/image-processing';
 import {
     ListFilesQuerySchema,
     ListFilesResponseSchema,
@@ -324,15 +325,35 @@ uploadRoutes.openapi(uploadFileRoute, async (c) => {
 
         // Upload to R2
         const arrayBuffer = await file.arrayBuffer();
+
+        // Process image for dimensions and thumbhash (non-blocking failure)
+        let imageData: { width?: number; height?: number; thumbhash?: string } = {};
+        if (isProcessableImage(contentType)) {
+            try {
+                const result = await processImage(arrayBuffer, contentType);
+                if (result) {
+                    imageData = {
+                        width: result.width,
+                        height: result.height,
+                        thumbhash: result.thumbhash ?? undefined,
+                    };
+                }
+            } catch (error) {
+                // Log but don't fail upload if image processing fails
+                console.error('Image processing error:', error);
+            }
+        }
+
         await r2.upload(path, arrayBuffer, {
             originalName: file.name,
             contentType,
             size: file.size,
             accountId: userId,
             uploadedAt: new Date().toISOString(),
+            ...imageData,
         });
 
-        // Save to database
+        // Save to database with image metadata
         const newFile = await db
             .insert(schema.uploadedFiles)
             .values({
@@ -340,6 +361,9 @@ uploadRoutes.openapi(uploadFileRoute, async (c) => {
                 accountId: userId,
                 path,
                 reuseKey: reuseKey ?? undefined,
+                width: imageData.width,
+                height: imageData.height,
+                thumbhash: imageData.thumbhash,
             })
             .returning();
 
@@ -734,11 +758,32 @@ uploadRoutes.openapi(uploadAvatarRoute, async (c) => {
 
         // Upload new avatar
         const arrayBuffer = await file.arrayBuffer();
+
+        // Process image for dimensions and thumbhash
+        let imageData: { width?: number; height?: number; thumbhash?: string } = {};
+        if (isProcessableImage(contentType)) {
+            try {
+                const result = await processImage(arrayBuffer, contentType);
+                if (result) {
+                    imageData = {
+                        width: result.width,
+                        height: result.height,
+                        thumbhash: result.thumbhash ?? undefined,
+                    };
+                }
+            } catch (error) {
+                console.error('Avatar image processing error:', error);
+            }
+        }
+
         const uploadResult = await r2.uploadAvatar(
             userId,
             arrayBuffer,
             contentType as SupportedImageType,
-            file.name
+            file.name,
+            imageData.width && imageData.height
+                ? { width: imageData.width, height: imageData.height }
+                : undefined
         );
 
         // Save to database with reuse key for easy replacement
@@ -750,6 +795,9 @@ uploadRoutes.openapi(uploadAvatarRoute, async (c) => {
                 accountId: userId,
                 path: uploadResult.path,
                 reuseKey: 'profile-avatar',
+                width: imageData.width,
+                height: imageData.height,
+                thumbhash: imageData.thumbhash,
             })
             .returning();
 
