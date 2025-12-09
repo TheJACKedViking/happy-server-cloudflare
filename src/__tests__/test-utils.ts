@@ -9,6 +9,9 @@
 
 import { vi } from 'vitest';
 
+// Re-export mock-drizzle utilities for easy access
+export { createMockDrizzle, type MockDrizzleInstance } from './mock-drizzle';
+
 /**
  * Mock user ID used in authentication mocks
  */
@@ -334,62 +337,79 @@ export async function expectOneOfStatus<T>(
 }
 
 /**
- * Create test session data
+ * Create test session data compatible with Drizzle ORM schema
+ * Returns Date objects for timestamp fields as expected by the schema
  */
 export function createTestSession(accountId: string, overrides: Partial<{
     id: string;
     tag: string;
     metadata: string;
+    agentState: string;
     active: boolean;
+    lastActiveAt: Date;
+    createdAt: Date;
+    updatedAt: Date;
 }> = {}) {
-    const now = Date.now();
+    const now = new Date();
     return {
         id: overrides.id ?? generateTestId('session'),
-        tag: overrides.tag ?? `test-tag-${now}`,
+        tag: overrides.tag ?? `test-tag-${Date.now()}`,
         accountId,
         metadata: overrides.metadata ?? '{"name":"Test Session"}',
         metadataVersion: 1,
+        agentState: overrides.agentState ?? '{}',
+        agentStateVersion: 1,
         dataEncryptionKey: Buffer.from('test-key'),
         seq: 0,
         active: overrides.active ?? true,
-        lastActiveAt: now,
-        createdAt: now,
-        updatedAt: now,
+        lastActiveAt: overrides.lastActiveAt ?? now,
+        createdAt: overrides.createdAt ?? now,
+        updatedAt: overrides.updatedAt ?? now,
     };
 }
 
 /**
- * Create test machine data
+ * Create test machine data compatible with Drizzle ORM schema
+ * Returns Date objects for timestamp fields as expected by the schema
  */
 export function createTestMachine(accountId: string, overrides: Partial<{
     id: string;
     metadata: string;
+    daemonState: string;
     active: boolean;
+    lastActiveAt: Date;
+    createdAt: Date;
+    updatedAt: Date;
 }> = {}) {
-    const now = Date.now();
+    const now = new Date();
     return {
         id: overrides.id ?? generateTestId('machine'),
         accountId,
         metadata: overrides.metadata ?? '{"hostname":"test-machine"}',
         metadataVersion: 1,
+        daemonState: overrides.daemonState ?? '{}',
+        daemonStateVersion: 1,
         dataEncryptionKey: Buffer.from('test-key'),
         seq: 0,
         active: overrides.active ?? false,
-        lastActiveAt: now,
-        createdAt: now,
-        updatedAt: now,
+        lastActiveAt: overrides.lastActiveAt ?? now,
+        createdAt: overrides.createdAt ?? now,
+        updatedAt: overrides.updatedAt ?? now,
     };
 }
 
 /**
- * Create test artifact data
+ * Create test artifact data compatible with Drizzle ORM schema
+ * Returns Date objects for timestamp fields as expected by the schema
  */
 export function createTestArtifact(accountId: string, overrides: Partial<{
     id: string;
     header: Buffer;
     body: Buffer;
+    createdAt: Date;
+    updatedAt: Date;
 }> = {}) {
-    const now = Date.now();
+    const now = new Date();
     return {
         id: overrides.id ?? generateTestId('artifact'),
         accountId,
@@ -399,13 +419,14 @@ export function createTestArtifact(accountId: string, overrides: Partial<{
         bodyVersion: 1,
         dataEncryptionKey: Buffer.from('test-key'),
         seq: 0,
-        createdAt: now,
-        updatedAt: now,
+        createdAt: overrides.createdAt ?? now,
+        updatedAt: overrides.updatedAt ?? now,
     };
 }
 
 /**
- * Create test account data
+ * Create test account data compatible with Drizzle ORM schema
+ * Returns Date objects for timestamp fields as expected by the schema
  */
 export function createTestAccount(overrides: Partial<{
     id: string;
@@ -413,8 +434,10 @@ export function createTestAccount(overrides: Partial<{
     firstName: string;
     lastName: string;
     username: string;
+    createdAt: Date;
+    updatedAt: Date;
 }> = {}) {
-    const now = Date.now();
+    const now = new Date();
     return {
         id: overrides.id ?? generateTestId('account'),
         publicKey: overrides.publicKey ?? `ed25519_pk_test_${Date.now()}`,
@@ -425,7 +448,28 @@ export function createTestAccount(overrides: Partial<{
         username: overrides.username ?? `testuser_${Date.now()}`,
         settings: '{}',
         settingsVersion: 1,
-        createdAt: now,
-        updatedAt: now,
+        createdAt: overrides.createdAt ?? now,
+        updatedAt: overrides.updatedAt ?? now,
+    };
+}
+
+/**
+ * Create test access key data compatible with Drizzle ORM schema
+ */
+export function createTestAccessKey(accountId: string, sessionId: string, machineId: string, overrides: Partial<{
+    data: string;
+    dataVersion: number;
+    createdAt: Date;
+    updatedAt: Date;
+}> = {}) {
+    const now = new Date();
+    return {
+        accountId,
+        sessionId,
+        machineId,
+        data: overrides.data ?? 'encrypted-access-key-data',
+        dataVersion: overrides.dataVersion ?? 1,
+        createdAt: overrides.createdAt ?? now,
+        updatedAt: overrides.updatedAt ?? now,
     };
 }
