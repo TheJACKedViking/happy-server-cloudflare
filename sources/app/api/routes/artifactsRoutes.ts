@@ -209,7 +209,7 @@ export function artifactsRoutes(app: Fastify) {
             eventRouter.emitUpdate({
                 userId,
                 payload: newArtifactPayload,
-                recipientFilter: { type: 'all-user-authenticated-connections' }
+                recipientFilter: { type: 'user-scoped-only' }
             });
 
             return reply.send({
@@ -346,7 +346,7 @@ export function artifactsRoutes(app: Fastify) {
             eventRouter.emitUpdate({
                 userId,
                 payload: updatePayload,
-                recipientFilter: { type: 'all-user-authenticated-connections' }
+                recipientFilter: { type: 'user-scoped-only' }
             });
 
             return reply.send({
@@ -407,7 +407,7 @@ export function artifactsRoutes(app: Fastify) {
             eventRouter.emitUpdate({
                 userId,
                 payload: deletePayload,
-                recipientFilter: { type: 'all-user-authenticated-connections' }
+                recipientFilter: { type: 'user-scoped-only' }
             });
 
             return reply.send({ success: true });

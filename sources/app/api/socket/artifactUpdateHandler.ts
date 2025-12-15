@@ -229,7 +229,7 @@ export function artifactUpdateHandler(userId: string, socket: Socket) {
             eventRouter.emitUpdate({
                 userId,
                 payload: updatePayload,
-                recipientFilter: { type: 'all-user-authenticated-connections' }
+                recipientFilter: { type: 'user-scoped-only' }
             });
 
             // Send success response
@@ -329,7 +329,7 @@ export function artifactUpdateHandler(userId: string, socket: Socket) {
             eventRouter.emitUpdate({
                 userId,
                 payload: newArtifactPayload,
-                recipientFilter: { type: 'all-user-authenticated-connections' }
+                recipientFilter: { type: 'user-scoped-only' }
             });
 
             // Return created artifact
@@ -397,7 +397,7 @@ export function artifactUpdateHandler(userId: string, socket: Socket) {
             eventRouter.emitUpdate({
                 userId,
                 payload: deletePayload,
-                recipientFilter: { type: 'all-user-authenticated-connections' }
+                recipientFilter: { type: 'user-scoped-only' }
             });
 
             // Send success response
