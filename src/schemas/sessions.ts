@@ -97,6 +97,10 @@ export const SessionMessageSchema = z
             description: 'Message creation timestamp (Unix milliseconds)',
             example: 1705014000000,
         }),
+        updatedAt: z.number().int().openapi({
+            description: 'Message last update timestamp (Unix milliseconds)',
+            example: 1705014000000,
+        }),
     })
     .openapi('SessionMessage');
 
@@ -322,6 +326,21 @@ export const CreateSessionMessageResponseSchema = z
         }),
     })
     .openapi('CreateSessionMessageResponse');
+
+// ============================================================================
+// GET /v1/sessions/:id/messages - List Session Messages
+// ============================================================================
+
+/**
+ * Schema for listing session messages response
+ */
+export const ListSessionMessagesResponseSchema = z
+    .object({
+        messages: z.array(SessionMessageSchema).openapi({
+            description: 'Array of session messages ordered by most recent',
+        }),
+    })
+    .openapi('ListSessionMessagesResponse');
 
 // ============================================================================
 // Error Responses

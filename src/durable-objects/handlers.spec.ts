@@ -54,6 +54,12 @@ function createMockDb() {
     let selectResults: unknown[] = [];
     let updateResults: unknown[] = [];
     let insertResults: unknown[] = [];
+    let selectCallIndex = 0;
+    let updateCallIndex = 0;
+    let insertCallIndex = 0;
+    const selectResultsQueue: unknown[][] = [];
+    const updateResultsQueue: unknown[][] = [];
+    const insertResultsQueue: unknown[][] = [];
 
     const mockWhere = vi.fn(() => ({
         returning: vi.fn(async () => updateResults),
@@ -61,16 +67,31 @@ function createMockDb() {
 
     const mockSet = vi.fn(() => ({
         where: vi.fn(() => ({
-            returning: vi.fn(async () => updateResults),
+            returning: vi.fn(async () => {
+                if (updateResultsQueue.length > 0 && updateCallIndex < updateResultsQueue.length) {
+                    return updateResultsQueue[updateCallIndex++];
+                }
+                return updateResults;
+            }),
         })),
     }));
 
     const mockFrom = vi.fn(() => ({
-        where: vi.fn(async () => selectResults),
+        where: vi.fn(async () => {
+            if (selectResultsQueue.length > 0 && selectCallIndex < selectResultsQueue.length) {
+                return selectResultsQueue[selectCallIndex++];
+            }
+            return selectResults;
+        }),
     }));
 
     const mockValues = vi.fn(() => ({
-        returning: vi.fn(async () => insertResults),
+        returning: vi.fn(async () => {
+            if (insertResultsQueue.length > 0 && insertCallIndex < insertResultsQueue.length) {
+                return insertResultsQueue[insertCallIndex++];
+            }
+            return insertResults;
+        }),
     }));
 
     const db = {
@@ -95,6 +116,22 @@ function createMockDb() {
         },
         _setInsertResults: (results: unknown[]) => {
             insertResults = results;
+        },
+        // Queue-based helpers for multiple sequential calls
+        _queueSelectResults: (resultsArray: unknown[][]) => {
+            selectResultsQueue.length = 0;
+            selectCallIndex = 0;
+            resultsArray.forEach(r => selectResultsQueue.push(r));
+        },
+        _queueUpdateResults: (resultsArray: unknown[][]) => {
+            updateResultsQueue.length = 0;
+            updateCallIndex = 0;
+            resultsArray.forEach(r => updateResultsQueue.push(r));
+        },
+        _queueInsertResults: (resultsArray: unknown[][]) => {
+            insertResultsQueue.length = 0;
+            insertCallIndex = 0;
+            resultsArray.forEach(r => insertResultsQueue.push(r));
         },
         _mockFrom: mockFrom,
         _mockSet: mockSet,
@@ -1179,6 +1216,482 @@ describe('Usage Handlers', () => {
             expect(result.response?.reportId).toBe('report-1');
             // No ephemeral since no sessionId
             expect(result.ephemeral).toBeUndefined();
+        });
+
+        it('should return error if save fails (insert returns empty)', async () => {
+            const mockDb = createMockDb();
+            // No existing report
+            mockDb._mockFrom.mockImplementationOnce(() => ({
+                where: vi.fn(async () => []),
+            }));
+            // Insert fails - returns empty array
+            mockDb._setInsertResults([]);
+
+            const ctx = createContext({ db: mockDb as unknown as HandlerContext['db'] });
+
+            const result = await handleUsageReport(ctx, {
+                key: 'claude-3-sonnet',
+                tokens: { total: 100 },
+                cost: { total: 0.01 },
+            });
+
+            expect(result.response?.success).toBe(false);
+            expect(result.response?.error).toBe('Failed to save usage report');
+        });
+
+        it('should return error if update fails (update returns empty)', async () => {
+            const mockDb = createMockDb();
+            const now = new Date();
+            // Existing report found
+            mockDb._mockFrom.mockImplementationOnce(() => ({
+                where: vi.fn(async () => [{
+                    id: 'report-1',
+                    createdAt: now,
+                    updatedAt: now,
+                }]),
+            }));
+            // Update fails - returns empty array (simulating failed update)
+            mockDb._setUpdateResults([]);
+
+            const ctx = createContext({ db: mockDb as unknown as HandlerContext['db'] });
+
+            const result = await handleUsageReport(ctx, {
+                key: 'claude-3-sonnet',
+                tokens: { total: 100 },
+                cost: { total: 0.01 },
+            });
+
+            expect(result.response?.success).toBe(false);
+            expect(result.response?.error).toBe('Failed to save usage report');
+        });
+    });
+});
+
+// =============================================================================
+// ADDITIONAL COVERAGE TESTS
+// =============================================================================
+
+describe('Additional Coverage Tests', () => {
+    describe('handleArtifactUpdate - Success Cases', () => {
+        it('should successfully update header only', async () => {
+            const mockDb = createMockDb();
+            const now = new Date();
+            // First select: artifact found
+            mockDb._queueSelectResults([
+                [{
+                    id: 'artifact-1',
+                    accountId: 'test-user-123',
+                    header: new Uint8Array([1, 2, 3]),
+                    headerVersion: 1,
+                    body: new Uint8Array([4, 5, 6]),
+                    bodyVersion: 1,
+                    seq: 5,
+                }],
+            ]);
+            // Update returns updated row
+            mockDb._queueUpdateResults([
+                [{
+                    id: 'artifact-1',
+                    headerVersion: 2,
+                    seq: 6,
+                }],
+                [{ seq: 10 }], // Account seq update
+            ]);
+
+            const ctx = createContext({ db: mockDb as unknown as HandlerContext['db'] });
+
+            const result = await handleArtifactUpdate(ctx, {
+                artifactId: 'artifact-1',
+                header: { data: 'bmV3LWhlYWRlcg==', expectedVersion: 1 },
+            });
+
+            expect(result.response?.result).toBe('success');
+            expect(result.response?.header).toBeDefined();
+            expect(result.response?.header?.version).toBe(2);
+            expect(result.response?.body).toBeUndefined();
+            expect(result.broadcast).toBeDefined();
+            expect(result.broadcast?.message.event).toBe('update');
+            expect(result.broadcast?.message.data.body.t).toBe('update-artifact');
+        });
+
+        it('should successfully update body only', async () => {
+            const mockDb = createMockDb();
+            // First select: artifact found
+            mockDb._queueSelectResults([
+                [{
+                    id: 'artifact-1',
+                    accountId: 'test-user-123',
+                    header: new Uint8Array([1, 2, 3]),
+                    headerVersion: 1,
+                    body: new Uint8Array([4, 5, 6]),
+                    bodyVersion: 1,
+                    seq: 5,
+                }],
+            ]);
+            // Update returns updated row
+            mockDb._queueUpdateResults([
+                [{
+                    id: 'artifact-1',
+                    bodyVersion: 2,
+                    seq: 6,
+                }],
+                [{ seq: 10 }], // Account seq update
+            ]);
+
+            const ctx = createContext({ db: mockDb as unknown as HandlerContext['db'] });
+
+            const result = await handleArtifactUpdate(ctx, {
+                artifactId: 'artifact-1',
+                body: { data: 'bmV3LWJvZHk=', expectedVersion: 1 },
+            });
+
+            expect(result.response?.result).toBe('success');
+            expect(result.response?.header).toBeUndefined();
+            expect(result.response?.body).toBeDefined();
+            expect(result.response?.body?.version).toBe(2);
+            expect(result.broadcast).toBeDefined();
+        });
+
+        it('should successfully update both header and body', async () => {
+            const mockDb = createMockDb();
+            // First select: artifact found
+            mockDb._queueSelectResults([
+                [{
+                    id: 'artifact-1',
+                    accountId: 'test-user-123',
+                    header: new Uint8Array([1, 2, 3]),
+                    headerVersion: 1,
+                    body: new Uint8Array([4, 5, 6]),
+                    bodyVersion: 1,
+                    seq: 5,
+                }],
+            ]);
+            // Update returns updated row
+            mockDb._queueUpdateResults([
+                [{
+                    id: 'artifact-1',
+                    headerVersion: 2,
+                    bodyVersion: 2,
+                    seq: 6,
+                }],
+                [{ seq: 10 }], // Account seq update
+            ]);
+
+            const ctx = createContext({ db: mockDb as unknown as HandlerContext['db'] });
+
+            const result = await handleArtifactUpdate(ctx, {
+                artifactId: 'artifact-1',
+                header: { data: 'bmV3LWhlYWRlcg==', expectedVersion: 1 },
+                body: { data: 'bmV3LWJvZHk=', expectedVersion: 1 },
+            });
+
+            expect(result.response?.result).toBe('success');
+            expect(result.response?.header).toBeDefined();
+            expect(result.response?.body).toBeDefined();
+            expect(result.broadcast).toBeDefined();
+        });
+
+        it('should return version-mismatch on race condition during update', async () => {
+            const mockDb = createMockDb();
+            // First select: artifact found with matching version
+            mockDb._queueSelectResults([
+                [{
+                    id: 'artifact-1',
+                    accountId: 'test-user-123',
+                    header: new Uint8Array([1, 2, 3]),
+                    headerVersion: 1,
+                    body: new Uint8Array([4, 5, 6]),
+                    bodyVersion: 1,
+                    seq: 5,
+                }],
+                // Re-fetch after failed update
+                [{
+                    id: 'artifact-1',
+                    accountId: 'test-user-123',
+                    header: new Uint8Array([7, 8, 9]),
+                    headerVersion: 3, // Changed by another process
+                    body: new Uint8Array([10, 11, 12]),
+                    bodyVersion: 2,
+                    seq: 7,
+                }],
+            ]);
+            // Update returns empty (version mismatch during atomic update)
+            mockDb._queueUpdateResults([[]]);
+
+            const ctx = createContext({ db: mockDb as unknown as HandlerContext['db'] });
+
+            const result = await handleArtifactUpdate(ctx, {
+                artifactId: 'artifact-1',
+                header: { data: 'bmV3LWhlYWRlcg==', expectedVersion: 1 },
+            });
+
+            expect(result.response?.result).toBe('version-mismatch');
+            expect(result.response?.header).toBeDefined();
+            expect(result.response?.header?.currentVersion).toBe(3);
+        });
+
+        it('should return version-mismatch on race condition with body update', async () => {
+            const mockDb = createMockDb();
+            // First select: artifact found with matching version
+            mockDb._queueSelectResults([
+                [{
+                    id: 'artifact-1',
+                    accountId: 'test-user-123',
+                    header: new Uint8Array([1, 2, 3]),
+                    headerVersion: 1,
+                    body: new Uint8Array([4, 5, 6]),
+                    bodyVersion: 1,
+                    seq: 5,
+                }],
+                // Re-fetch after failed update
+                [{
+                    id: 'artifact-1',
+                    accountId: 'test-user-123',
+                    header: new Uint8Array([7, 8, 9]),
+                    headerVersion: 2,
+                    body: new Uint8Array([10, 11, 12]),
+                    bodyVersion: 5, // Changed by another process
+                    seq: 7,
+                }],
+            ]);
+            // Update returns empty (version mismatch during atomic update)
+            mockDb._queueUpdateResults([[]]);
+
+            const ctx = createContext({ db: mockDb as unknown as HandlerContext['db'] });
+
+            const result = await handleArtifactUpdate(ctx, {
+                artifactId: 'artifact-1',
+                body: { data: 'bmV3LWJvZHk=', expectedVersion: 1 },
+            });
+
+            expect(result.response?.result).toBe('version-mismatch');
+            expect(result.response?.body).toBeDefined();
+            expect(result.response?.body?.currentVersion).toBe(5);
+        });
+
+        it('should return version-mismatch for both header and body on early check', async () => {
+            const mockDb = createMockDb();
+            // Artifact found with both versions mismatched
+            mockDb._queueSelectResults([
+                [{
+                    id: 'artifact-1',
+                    accountId: 'test-user-123',
+                    header: new Uint8Array([1, 2, 3]),
+                    headerVersion: 5, // Mismatch
+                    body: new Uint8Array([4, 5, 6]),
+                    bodyVersion: 7, // Mismatch
+                    seq: 10,
+                }],
+            ]);
+
+            const ctx = createContext({ db: mockDb as unknown as HandlerContext['db'] });
+
+            const result = await handleArtifactUpdate(ctx, {
+                artifactId: 'artifact-1',
+                header: { data: 'bmV3LWhlYWRlcg==', expectedVersion: 1 },
+                body: { data: 'bmV3LWJvZHk=', expectedVersion: 1 },
+            });
+
+            expect(result.response?.result).toBe('version-mismatch');
+            expect(result.response?.header).toBeDefined();
+            expect(result.response?.header?.currentVersion).toBe(5);
+            expect(result.response?.body).toBeDefined();
+            expect(result.response?.body?.currentVersion).toBe(7);
+        });
+    });
+
+    describe('handleArtifactCreate - Failure Cases', () => {
+        it('should return error if insert returns empty', async () => {
+            const mockDb = createMockDb();
+            // No existing artifact
+            mockDb._queueSelectResults([[]]);
+            // Insert fails - returns empty array
+            mockDb._queueInsertResults([[]]);
+
+            const ctx = createContext({ db: mockDb as unknown as HandlerContext['db'] });
+
+            const result = await handleArtifactCreate(ctx, {
+                id: 'artifact-1',
+                header: 'SGVhZGVy',
+                body: 'Qm9keQ==',
+                dataEncryptionKey: 'S2V5',
+            });
+
+            expect(result.response?.result).toBe('error');
+            expect(result.response?.message).toBe('Failed to create artifact');
+        });
+    });
+
+    describe('handleSessionMetadataUpdate - Race Condition', () => {
+        it('should return version-mismatch on race condition during atomic update', async () => {
+            const mockDb = createMockDb();
+            // First select: session found with matching version
+            mockDb._queueSelectResults([
+                [{
+                    id: 'session-1',
+                    accountId: 'test-user-123',
+                    metadataVersion: 1,
+                    metadata: '{"old":"data"}',
+                }],
+                // Re-fetch after failed update
+                [{
+                    id: 'session-1',
+                    accountId: 'test-user-123',
+                    metadataVersion: 3, // Changed by another process
+                    metadata: '{"concurrent":"update"}',
+                }],
+            ]);
+            // Update returns empty (version mismatch during atomic update)
+            mockDb._queueUpdateResults([[]]);
+
+            const ctx = createContext({ db: mockDb as unknown as HandlerContext['db'] });
+
+            const result = await handleSessionMetadataUpdate(ctx, {
+                sid: 'session-1',
+                metadata: '{"new":"data"}',
+                expectedVersion: 1,
+            });
+
+            expect(result.response?.result).toBe('version-mismatch');
+            expect(result.response?.version).toBe(3);
+            expect(result.response?.metadata).toBe('{"concurrent":"update"}');
+        });
+
+        it('should handle missing current session on re-fetch', async () => {
+            const mockDb = createMockDb();
+            // First select: session found with matching version
+            mockDb._queueSelectResults([
+                [{
+                    id: 'session-1',
+                    accountId: 'test-user-123',
+                    metadataVersion: 1,
+                    metadata: '{"old":"data"}',
+                }],
+                // Re-fetch returns nothing (session deleted)
+                [],
+            ]);
+            // Update returns empty (version mismatch or deleted)
+            mockDb._queueUpdateResults([[]]);
+
+            const ctx = createContext({ db: mockDb as unknown as HandlerContext['db'] });
+
+            const result = await handleSessionMetadataUpdate(ctx, {
+                sid: 'session-1',
+                metadata: '{"new":"data"}',
+                expectedVersion: 1,
+            });
+
+            expect(result.response?.result).toBe('version-mismatch');
+            expect(result.response?.version).toBe(0);
+            expect(result.response?.metadata).toBeUndefined();
+        });
+    });
+
+    describe('handleSessionStateUpdate - Race Condition', () => {
+        it('should return version-mismatch on race condition during atomic update', async () => {
+            const mockDb = createMockDb();
+            // First select: session found with matching version
+            mockDb._queueSelectResults([
+                [{
+                    id: 'session-1',
+                    accountId: 'test-user-123',
+                    agentStateVersion: 1,
+                    agentState: '{"old":"state"}',
+                }],
+                // Re-fetch after failed update
+                [{
+                    id: 'session-1',
+                    accountId: 'test-user-123',
+                    agentStateVersion: 5, // Changed by another process
+                    agentState: '{"concurrent":"state"}',
+                }],
+            ]);
+            // Update returns empty (version mismatch during atomic update)
+            mockDb._queueUpdateResults([[]]);
+
+            const ctx = createContext({ db: mockDb as unknown as HandlerContext['db'] });
+
+            const result = await handleSessionStateUpdate(ctx, {
+                sid: 'session-1',
+                agentState: '{"new":"state"}',
+                expectedVersion: 1,
+            });
+
+            expect(result.response?.result).toBe('version-mismatch');
+            expect(result.response?.version).toBe(5);
+            expect(result.response?.agentState).toBe('{"concurrent":"state"}');
+        });
+    });
+
+    describe('handleMachineMetadataUpdate - Race Condition', () => {
+        it('should return version-mismatch on race condition during atomic update', async () => {
+            const mockDb = createMockDb();
+            // First select: machine found with matching version
+            mockDb._queueSelectResults([
+                [{
+                    id: 'machine-1',
+                    accountId: 'test-user-123',
+                    metadataVersion: 1,
+                    metadata: '{"old":"metadata"}',
+                }],
+                // Re-fetch after failed update
+                [{
+                    id: 'machine-1',
+                    accountId: 'test-user-123',
+                    metadataVersion: 4, // Changed by another process
+                    metadata: '{"concurrent":"metadata"}',
+                }],
+            ]);
+            // Update returns empty (version mismatch during atomic update)
+            mockDb._queueUpdateResults([[]]);
+
+            const ctx = createContext({ db: mockDb as unknown as HandlerContext['db'] });
+
+            const result = await handleMachineMetadataUpdate(ctx, {
+                machineId: 'machine-1',
+                metadata: '{"new":"metadata"}',
+                expectedVersion: 1,
+            });
+
+            expect(result.response?.result).toBe('version-mismatch');
+            expect(result.response?.version).toBe(4);
+            expect(result.response?.metadata).toBe('{"concurrent":"metadata"}');
+        });
+    });
+
+    describe('handleMachineStateUpdate - Race Condition', () => {
+        it('should return version-mismatch on race condition during atomic update', async () => {
+            const mockDb = createMockDb();
+            // First select: machine found with matching version
+            mockDb._queueSelectResults([
+                [{
+                    id: 'machine-1',
+                    accountId: 'test-user-123',
+                    daemonStateVersion: 1,
+                    daemonState: '{"old":"state"}',
+                }],
+                // Re-fetch after failed update
+                [{
+                    id: 'machine-1',
+                    accountId: 'test-user-123',
+                    daemonStateVersion: 6, // Changed by another process
+                    daemonState: '{"concurrent":"state"}',
+                }],
+            ]);
+            // Update returns empty (version mismatch during atomic update)
+            mockDb._queueUpdateResults([[]]);
+
+            const ctx = createContext({ db: mockDb as unknown as HandlerContext['db'] });
+
+            const result = await handleMachineStateUpdate(ctx, {
+                machineId: 'machine-1',
+                daemonState: '{"new":"state"}',
+                expectedVersion: 1,
+            });
+
+            expect(result.response?.result).toBe('version-mismatch');
+            expect(result.response?.version).toBe(6);
+            expect(result.response?.daemonState).toBe('{"concurrent":"state"}');
         });
     });
 });

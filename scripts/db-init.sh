@@ -167,31 +167,55 @@ cmd_migrate() {
 
     log_info "Applying migrations to $db_name..."
 
-    local location_flag=""
+    # Build wrangler flags - always include --env for D1 binding resolution
+    local wrangler_flags="--env $ENVIRONMENT"
     if [ "$USE_LOCAL" = true ]; then
-        location_flag="--local"
-        log_info "Target: Local database"
+        wrangler_flags="$wrangler_flags --local"
+        log_info "Target: Local database (env: $ENVIRONMENT)"
     else
-        location_flag="--remote"
+        wrangler_flags="$wrangler_flags --remote"
         log_info "Target: Remote ($ENVIRONMENT) database"
     fi
 
-    # Apply each migration file in order
+    # Ensure migrations tracking table exists
+    log_info "Ensuring migration tracking table exists..."
+    wrangler d1 execute "$db_name" $wrangler_flags --command="CREATE TABLE IF NOT EXISTS _drizzle_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, hash TEXT NOT NULL UNIQUE, created_at INTEGER DEFAULT (unixepoch()));" 2>&1 > /dev/null
+
+    # Get list of already applied migrations
+    local applied_migrations=$(wrangler d1 execute "$db_name" $wrangler_flags --command="SELECT hash FROM _drizzle_migrations;" 2>&1 | grep -oE '"hash": "[^"]+"' | sed 's/"hash": "//g' | sed 's/"//g' || echo "")
+
+    # Apply each migration file in order (if not already applied)
     local count=0
+    local skipped=0
     for migration_file in $migration_files; do
         local filename=$(basename "$migration_file")
+        local hash="${filename%.sql}"
+
+        # Check if already applied
+        if echo "$applied_migrations" | grep -q "^${hash}$"; then
+            log_info "Skipping (already applied): $filename"
+            skipped=$((skipped + 1))
+            continue
+        fi
+
         log_info "Applying: $filename"
 
-        if wrangler d1 execute "$db_name" $location_flag --file="$migration_file" 2>&1; then
+        if wrangler d1 execute "$db_name" $wrangler_flags --file="$migration_file" 2>&1; then
+            # Record the migration as applied
+            wrangler d1 execute "$db_name" $wrangler_flags --command="INSERT INTO _drizzle_migrations (hash) VALUES ('${hash}');" 2>&1 > /dev/null
             log_success "Applied: $filename"
-            ((count++))
+            count=$((count + 1))
         else
             log_error "Failed to apply: $filename"
             exit 1
         fi
     done
 
-    log_success "Applied $count migration(s) successfully!"
+    if [ $count -eq 0 ] && [ $skipped -gt 0 ]; then
+        log_success "Database is up to date ($skipped migration(s) already applied)"
+    else
+        log_success "Applied $count new migration(s), skipped $skipped already applied"
+    fi
 }
 
 cmd_status() {
@@ -203,19 +227,20 @@ cmd_status() {
     echo "═══════════════════════════════════════════════════════════"
     echo ""
 
-    local location_flag=""
+    # Build wrangler flags - always include --env for D1 binding resolution
+    local wrangler_flags="--env $ENVIRONMENT"
     if [ "$USE_LOCAL" = true ]; then
-        location_flag="--local"
-        log_info "Checking: Local database"
+        wrangler_flags="$wrangler_flags --local"
+        log_info "Checking: Local database (env: $ENVIRONMENT)"
     else
-        location_flag="--remote"
+        wrangler_flags="$wrangler_flags --remote"
         log_info "Checking: Remote ($ENVIRONMENT) database"
     fi
 
     # List tables
     log_info "Tables in database:"
     echo ""
-    if wrangler d1 execute "$db_name" $location_flag --command="SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;" 2>&1; then
+    if wrangler d1 execute "$db_name" $wrangler_flags --command="SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;" 2>&1; then
         echo ""
     else
         log_error "Failed to query database. Is it initialized?"
@@ -226,7 +251,7 @@ cmd_status() {
     log_info "Row counts:"
     echo ""
     for table in Account Session Machine Artifact; do
-        local count=$(wrangler d1 execute "$db_name" $location_flag --command="SELECT COUNT(*) as count FROM $table;" 2>&1 | grep -oE '[0-9]+' | tail -1 || echo "0")
+        local count=$(wrangler d1 execute "$db_name" $wrangler_flags --command="SELECT COUNT(*) as count FROM $table;" 2>&1 | grep -oE '[0-9]+' | tail -1 || echo "0")
         echo "  $table: $count rows"
     done
     echo ""

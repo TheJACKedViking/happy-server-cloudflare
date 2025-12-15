@@ -1,0 +1,204 @@
+name: Deploy Workers
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'happy-server-workers/**'
+      - '.github/workflows/deploy.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'happy-server-workers/**'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - prod
+
+defaults:
+  run:
+    working-directory: happy-server-workers
+
+jobs:
+  # ============================================
+  # Quality Gates
+  # ============================================
+  quality:
+    name: Quality Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'yarn'
+          cache-dependency-path: happy-server-workers/yarn.lock
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install Dependencies
+        run: yarn install --immutable
+
+      - name: Type Check
+        run: yarn typecheck
+
+      - name: Lint
+        run: yarn lint
+
+      - name: Run Tests
+        run: yarn test
+
+  # ============================================
+  # Deploy to Development
+  # ============================================
+  deploy-dev:
+    name: Deploy to Development
+    runs-on: ubuntu-latest
+    needs: quality
+    if: |
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'dev')
+    environment:
+      name: development
+      url: https://happy-server-workers-dev.enflamemedia.workers.dev
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'yarn'
+          cache-dependency-path: happy-server-workers/yarn.lock
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install Dependencies
+        run: yarn install --immutable
+
+      - name: Deploy to Development
+        run: npx wrangler deploy --env dev
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Apply Database Migrations
+        run: yarn db:migrate:remote
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Smoke Test (Development)
+        run: |
+          echo "Running smoke tests against development..."
+          sleep 10
+
+          HEALTH_RESPONSE=$(curl -s -w "\n%{http_code}" https://happy-server-workers-dev.enflamemedia.workers.dev/health)
+          HTTP_CODE=$(echo "$HEALTH_RESPONSE" | tail -n1)
+          RESPONSE_BODY=$(echo "$HEALTH_RESPONSE" | sed '$d')
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "Health check failed with status $HTTP_CODE"
+            echo "Response: $RESPONSE_BODY"
+            exit 1
+          fi
+
+          echo "Health check passed"
+          echo "Response: $RESPONSE_BODY"
+
+  # ============================================
+  # Deploy to Production
+  # ============================================
+  deploy-prod:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: deploy-dev
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'prod'
+    environment:
+      name: production
+      url: https://happy-api.enflamemedia.com
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'yarn'
+          cache-dependency-path: happy-server-workers/yarn.lock
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install Dependencies
+        run: yarn install --immutable
+
+      - name: Deploy to Production
+        run: npx wrangler deploy --env prod
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Apply Database Migrations (Production)
+        run: yarn db:migrate:prod
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Smoke Test (Production)
+        run: |
+          echo "Running smoke tests against production..."
+          sleep 15
+
+          HEALTH_RESPONSE=$(curl -s -w "\n%{http_code}" https://happy-api.enflamemedia.com/health)
+          HTTP_CODE=$(echo "$HEALTH_RESPONSE" | tail -n1)
+          RESPONSE_BODY=$(echo "$HEALTH_RESPONSE" | sed '$d')
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "Health check failed with status $HTTP_CODE"
+            echo "Response: $RESPONSE_BODY"
+            exit 1
+          fi
+
+          echo "Health check passed"
+          echo "Response: $RESPONSE_BODY"
+
+          OPENAPI_RESPONSE=$(curl -s -w "\n%{http_code}" https://happy-api.enflamemedia.com/openapi.json)
+          HTTP_CODE=$(echo "$OPENAPI_RESPONSE" | tail -n1)
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "OpenAPI spec check failed with status $HTTP_CODE"
+            exit 1
+          fi
+
+          echo "OpenAPI spec available"
+
+      - name: Create Deployment Summary
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          echo "## Production Deployment Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment**: Production" >> $GITHUB_STEP_SUMMARY
+          echo "- **URL**: https://happy-api.enflamemedia.com" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit**: $COMMIT_SHA" >> $GITHUB_STEP_SUMMARY
+          echo "- **Deployed at**: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Smoke Tests" >> $GITHUB_STEP_SUMMARY
+          echo "- [x] Health check passed" >> $GITHUB_STEP_SUMMARY
+          echo "- [x] OpenAPI spec available" >> $GITHUB_STEP_SUMMARY

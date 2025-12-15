@@ -197,12 +197,17 @@ export async function initAuth(
     ephemeralTtl: number = DEFAULT_EPHEMERAL_TTL
 ): Promise<void> {
     if (authState) {
+        console.log('[Auth] Already initialized, public key:', authState.persistentPublicKey.substring(0, 10) + '...');
         return; // Already initialized
     }
+
+    console.log('[Auth] Initializing with secret length:', masterSecret.length);
 
     // Derive persistent key pair for main authentication tokens
     const persistentKeyPair = await deriveKeyPair(masterSecret, SERVICE_NAME);
     const persistentPublicKey = await exportPublicKey(persistentKeyPair.publicKey);
+
+    console.log('[Auth] Derived persistent public key:', persistentPublicKey.substring(0, 10) + '...');
 
     // Derive ephemeral key pair for short-lived tokens (GitHub OAuth, etc.)
     const ephemeralKeyPair = await deriveKeyPair(masterSecret, EPHEMERAL_SERVICE_NAME);
@@ -215,6 +220,8 @@ export async function initAuth(
         ephemeralPublicKey,
         ephemeralTtl,
     };
+
+    console.log('[Auth] Initialization complete');
 }
 
 /**
@@ -267,6 +274,8 @@ export async function createToken(userId: string, extras?: TokenExtras): Promise
         throw new Error('Auth module not initialized - call initAuth() first');
     }
 
+    console.log('[Auth] Creating token for user:', userId, 'with public key:', authState.persistentPublicKey.substring(0, 10) + '...');
+
     const builder = new SignJWT({
         user: userId,
         ...(extras && { extras }),
@@ -277,6 +286,8 @@ export async function createToken(userId: string, extras?: TokenExtras): Promise
 
     // Persistent tokens don't expire (match privacy-kit behavior)
     const token = await builder.sign(authState.persistentKey);
+
+    console.log('[Auth] Token created, first 20 chars:', token.substring(0, 20) + '...');
 
     // Cache the token immediately for fast verification
     tokenCache.set(token, {
@@ -314,19 +325,27 @@ export async function createToken(userId: string, extras?: TokenExtras): Promise
 export async function verifyToken(
     token: string
 ): Promise<{ userId: string; extras?: TokenExtras } | null> {
+    console.log('[Auth] Verifying token, first 20 chars:', token.substring(0, 20) + '...');
+
     // Check cache first for fast path
     const cached = tokenCache.get(token);
     if (cached) {
+        console.log('[Auth] Token found in cache for user:', cached.userId);
         return {
             userId: cached.userId,
             extras: cached.extras,
         };
     }
 
+    console.log('[Auth] Token not in cache, verifying cryptographically...');
+
     // Cache miss - verify token cryptographically
     if (!authState) {
+        console.error('[Auth] ERROR: Auth module not initialized!');
         throw new Error('Auth module not initialized - call initAuth() first');
     }
+
+    console.log('[Auth] Using public key:', authState.persistentPublicKey.substring(0, 10) + '...');
 
     try {
         // Derive public key from private key for verification
@@ -352,6 +371,8 @@ export async function verifyToken(
         const userId = payload.user as string;
         const extras = payload.extras as TokenExtras | undefined;
 
+        console.log('[Auth] Token verified successfully for user:', userId);
+
         // Cache the result for future fast verification
         tokenCache.set(token, {
             userId,
@@ -368,9 +389,10 @@ export async function verifyToken(
             error instanceof joseErrors.JWSSignatureVerificationFailed ||
             error instanceof joseErrors.JWTClaimValidationFailed
         ) {
+            console.log('[Auth] Token verification failed:', error instanceof Error ? error.message : String(error));
             return null;
         }
-        console.error('Token verification failed:', error);
+        console.error('[Auth] Token verification error:', error);
         return null;
     }
 }

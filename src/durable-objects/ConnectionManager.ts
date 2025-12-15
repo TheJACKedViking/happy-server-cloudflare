@@ -575,15 +575,40 @@ export class ConnectionManager extends DurableObject<ConnectionManagerEnv> {
                         const parts = rpcPayload.method.split(':');
                         const targetId = parts[0];
                         if (targetId) {
-                            // Try to find matching session or machine connection
-                            this.broadcastClientMessage(
-                                {
-                                    event: 'rpc-request',
-                                    data: normalized.payload,
-                                    ackId: normalized.messageId,
-                                },
-                                { type: 'all-interested-in-session', sessionId: targetId }
-                            );
+                            // Check if the targetId matches a machine-scoped connection
+                            // This determines whether to route to machine or session
+                            let hasMachineConnection = false;
+                            for (const connMetadata of this.connections.values()) {
+                                if (
+                                    connMetadata.clientType === 'machine-scoped' &&
+                                    connMetadata.machineId === targetId
+                                ) {
+                                    hasMachineConnection = true;
+                                    break;
+                                }
+                            }
+
+                            if (hasMachineConnection) {
+                                // Target is a machine - route to machine-scoped connection
+                                this.broadcastClientMessage(
+                                    {
+                                        event: 'rpc-request',
+                                        data: normalized.payload,
+                                        ackId: normalized.messageId,
+                                    },
+                                    { type: 'machine', machineId: targetId }
+                                );
+                            } else {
+                                // Target is a session - route to session-scoped connections and user-scoped
+                                this.broadcastClientMessage(
+                                    {
+                                        event: 'rpc-request',
+                                        data: normalized.payload,
+                                        ackId: normalized.messageId,
+                                    },
+                                    { type: 'all-interested-in-session', sessionId: targetId }
+                                );
+                            }
                         }
                     }
                 }

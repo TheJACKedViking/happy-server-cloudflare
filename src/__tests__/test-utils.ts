@@ -457,6 +457,7 @@ export function createTestAccount(overrides: Partial<{
  * Create test access key data compatible with Drizzle ORM schema
  */
 export function createTestAccessKey(accountId: string, sessionId: string, machineId: string, overrides: Partial<{
+    id: string;
     data: string;
     dataVersion: number;
     createdAt: Date;
@@ -464,6 +465,7 @@ export function createTestAccessKey(accountId: string, sessionId: string, machin
 }> = {}) {
     const now = new Date();
     return {
+        id: overrides.id ?? generateTestId('accesskey'),
         accountId,
         sessionId,
         machineId,

@@ -21,6 +21,7 @@ import {
     DeleteSessionResponseSchema,
     CreateSessionMessageRequestSchema,
     CreateSessionMessageResponseSchema,
+    ListSessionMessagesResponseSchema,
     BadRequestErrorSchema,
     NotFoundErrorSchema,
     UnauthorizedErrorSchema,
@@ -44,6 +45,7 @@ interface Env {
  * - GET /v1/sessions/:id - Get single session
  * - DELETE /v1/sessions/:id - Delete session (soft delete, sets active=false)
  * - POST /v1/sessions/:id/messages - Create message in session
+ * - GET /v1/sessions/:id/messages - List messages in session
  *
  * All routes use OpenAPI schemas for automatic documentation and validation.
  */
@@ -659,7 +661,85 @@ sessionRoutes.openapi(createSessionMessageRoute, async (c) => {
             seq: message.seq,
             content: JSON.parse(message.content as string),
             createdAt: message.createdAt.getTime(),
+            updatedAt: message.updatedAt.getTime(),
         },
+    });
+});
+
+// ============================================================================
+// GET /v1/sessions/:id/messages - List Session Messages
+// ============================================================================
+
+const listSessionMessagesRoute = createRoute({
+    method: 'get',
+    path: '/v1/sessions/:id/messages',
+    request: {
+        params: SessionIdParamSchema,
+    },
+    responses: {
+        200: {
+            content: {
+                'application/json': {
+                    schema: ListSessionMessagesResponseSchema,
+                },
+            },
+            description: 'List of session messages',
+        },
+        404: {
+            content: {
+                'application/json': {
+                    schema: NotFoundErrorSchema,
+                },
+            },
+            description: 'Session not found',
+        },
+        401: {
+            content: {
+                'application/json': {
+                    schema: UnauthorizedErrorSchema,
+                },
+            },
+            description: 'Unauthorized',
+        },
+    },
+    tags: ['Sessions'],
+    summary: 'List session messages',
+    description: 'Get all messages for a session. Returns up to 150 messages ordered by most recent. User must own the session.',
+});
+
+// @ts-expect-error - OpenAPI handler type inference doesn't carry Variables from middleware
+sessionRoutes.openapi(listSessionMessagesRoute, async (c) => {
+    const userId = (c as unknown as Context<{ Bindings: Env; Variables: AuthVariables }>).get('userId');
+    const { id: sessionId } = c.req.valid('param');
+    const db = getDb(c.env.DB);
+
+    // Verify session exists and belongs to user
+    const session = await db.query.sessions.findFirst({
+        where: (sessions, { eq, and }) =>
+            and(eq(sessions.id, sessionId), eq(sessions.accountId, userId)),
+    });
+
+    if (!session) {
+        return c.json({ error: 'Session not found' }, 404);
+    }
+
+    // Fetch messages ordered by createdAt descending (most recent first)
+    const messages = await db.query.sessionMessages.findMany({
+        where: (sessionMessages, { eq }) => eq(sessionMessages.sessionId, sessionId),
+        orderBy: (sessionMessages, { desc }) => [desc(sessionMessages.createdAt)],
+        limit: 150,
+    });
+
+    return c.json({
+        messages: messages.map((m) => ({
+            id: m.id,
+            sessionId: m.sessionId,
+            localId: m.localId,
+            seq: m.seq,
+            content: m.content,
+            createdAt: m.createdAt.getTime(),
+            updatedAt: m.updatedAt.getTime(),
+        })),
     });
 });
 

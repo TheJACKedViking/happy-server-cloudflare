@@ -42,8 +42,11 @@ export const cors = (): MiddlewareHandler => {
             }
 
             // Production: Whitelist specific domains
-            // TODO: Update these with actual production domains before production deployment
             const allowedDomains: readonly string[] = [
+                // Primary production and development domains
+                'https://happy.enflamemedia.com',
+                'https://happy-dev.enflamemedia.com',
+                // Reserved future domains
                 'https://happy.app',
                 'https://www.happy.app',
                 'https://api.happy.app',

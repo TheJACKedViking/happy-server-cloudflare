@@ -1,6 +1,6 @@
 name = "happy-server-workers"
 main = "src/index.ts"
-compatibility_date = "2025-01-08"
+compatibility_date = "2025-11-17"
 compatibility_flags = ["nodejs_compat"]
 
 # Cloudflare Account ID
@@ -16,17 +16,23 @@ command = ""
 [env.dev]
 name = "happy-server-workers-dev"
 vars = { ENVIRONMENT = "development" }
+# Custom domain routing
+routes = [
+    { pattern = "happy-api-dev.enflamemedia.com", custom_domain = true }
+]
 
 # D1 Database binding (development)
 [[env.dev.d1_databases]]
 binding = "DB"
 database_name = "happy-dev"
-database_id = "REPLACE_WITH_ACTUAL_DATABASE_ID"  # Run: wrangler d1 create happy-dev
+database_id = "402f86c0-7405-49cc-9667-93ad06fe4206"
+remote = true
 
 # R2 Bucket binding (development)
 [[env.dev.r2_buckets]]
 binding = "UPLOADS"
 bucket_name = "happy-dev-uploads"
+remote = true
 
 # Durable Objects bindings (development)
 [[env.dev.durable_objects.bindings]]
@@ -38,27 +44,41 @@ class_name = "ConnectionManager"
 tag = "v1"
 new_classes = ["ConnectionManager"]
 
+[env.dev.observability]
+[env.dev.observability.logs]
+enabled = true
+head_sampling_rate = 1
+invocation_logs = true
+persist = true
+
+[env.dev.observability.traces]
+enabled = true
+head_sampling_rate = 1
+persist = true
+
 #############################
 # Production Environment
 #############################
 [env.prod]
 name = "happy-server-workers-prod"
 vars = { ENVIRONMENT = "production" }
-# Custom domain routing - configure after domain setup
-# routes = [
-#     { pattern = "happy-api.enflamemedia.com", custom_domain = true }
-# ]
+# Custom domain routing
+routes = [
+    { pattern = "happy-api.enflamemedia.com", custom_domain = true }
+]
 
 # D1 Database binding (production)
 [[env.prod.d1_databases]]
 binding = "DB"
 database_name = "happy-prod"
-database_id = "REPLACE_WITH_ACTUAL_DATABASE_ID"  # Run: wrangler d1 create happy-prod
+database_id = "f547b6d8-035d-4550-a5cf-acea4c533901"
+remote = true
 
 # R2 Bucket binding (production)
 [[env.prod.r2_buckets]]
 binding = "UPLOADS"
 bucket_name = "happy-prod-uploads"
+remote = true
 
 # Durable Objects bindings (production)
 [[env.prod.durable_objects.bindings]]
@@ -70,22 +90,14 @@ class_name = "ConnectionManager"
 tag = "v1"
 new_classes = ["ConnectionManager"]
 
-#############################
-# Resource Limits (Paid Plan)
-#############################
-# Requires Cloudflare Workers Paid plan ($5/month)
-# Provides:
-# - Durable Objects access
-# - Extended CPU time (500ms vs 50ms)
-# - Higher request limits
-# - D1 storage beyond 500MB
+[env.prod.observability]
+[env.prod.observability.logs]
+enabled = true
+head_sampling_rate = 1
+invocation_logs = true
+persist = true
 
-#############################
-# Notes
-#############################
-# 1. Default environment (no env prefix) used for local development
-# 2. Deploy to specific environment: wrangler deploy --env dev|prod
-# 3. Update database_id values after creating D1 databases
-# 4. R2 buckets must be created before first deployment
-# 5. Custom domains configured in Cloudflare dashboard
-# 6. Secrets managed via: wrangler secret put SECRET_NAME --env prod
+[env.prod.observability.traces]
+enabled = true
+head_sampling_rate = 1
+persist = true

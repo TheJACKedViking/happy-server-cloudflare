@@ -4,7 +4,7 @@
  * @see HAP-286 for AI token encryption implementation
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
     initEncryption,
     resetEncryption,
@@ -143,6 +143,23 @@ describe('encryption', () => {
             await expect(decryptString(['test'], truncated)).rejects.toThrow('Decryption failed');
         });
 
+        it('should fail decryption with data shorter than nonce length', async () => {
+            // Data shorter than 24 bytes (secretbox nonce length)
+            const tooShort = new Uint8Array(10);
+
+            await expect(decryptString(['test'], tooShort)).rejects.toThrow(
+                'Invalid encrypted data: too short'
+            );
+        });
+
+        it('should fail decryption with empty data', async () => {
+            const emptyData = new Uint8Array(0);
+
+            await expect(decryptString(['test'], emptyData)).rejects.toThrow(
+                'Invalid encrypted data: too short'
+            );
+        });
+
         it('should throw if encryption not initialized', async () => {
             resetEncryption();
             await expect(encryptString(['test'], 'data')).rejects.toThrow(
@@ -174,6 +191,44 @@ describe('encryption', () => {
             const decrypted = await decryptBytes(path, encrypted);
 
             expect(decrypted).toEqual(plaintext);
+        });
+
+        it('should fail decryption with data shorter than nonce length', async () => {
+            // Data shorter than 24 bytes (secretbox nonce length)
+            const tooShort = new Uint8Array(10);
+
+            await expect(decryptBytes(['test'], tooShort)).rejects.toThrow(
+                'Invalid encrypted data: too short'
+            );
+        });
+
+        it('should fail decryption with empty data', async () => {
+            const emptyData = new Uint8Array(0);
+
+            await expect(decryptBytes(['test'], emptyData)).rejects.toThrow(
+                'Invalid encrypted data: too short'
+            );
+        });
+
+        it('should fail decryption with corrupted data', async () => {
+            const encrypted = await encryptBytes(['test'], new Uint8Array([1, 2, 3, 4]));
+
+            // Corrupt a byte in the ciphertext (after the 24-byte nonce)
+            const corrupted = new Uint8Array(encrypted);
+            corrupted[30] = (corrupted[30] ?? 0) ^ 0xff;
+
+            await expect(decryptBytes(['test'], corrupted)).rejects.toThrow(
+                'Decryption failed: invalid key or corrupted data'
+            );
+        });
+
+        it('should fail decryption with wrong path', async () => {
+            const plaintext = new Uint8Array([0xde, 0xad, 0xbe, 0xef]);
+            const encrypted = await encryptBytes(['path', 'a'], plaintext);
+
+            await expect(decryptBytes(['path', 'b'], encrypted)).rejects.toThrow(
+                'Decryption failed'
+            );
         });
     });
 
@@ -259,22 +314,60 @@ describe('encryption', () => {
         it('should evict oldest entries when cache limit is reached', async () => {
             clearKeyCache();
 
-            // Generate many unique paths to fill the cache
-            // Note: MAX_KEY_CACHE_SIZE is 1000, but we test with fewer for speed
-            const pathCount = 50;
-            for (let i = 0; i < pathCount; i++) {
-                await encryptString(['test', 'path', `key-${i}`], 'data');
+            // MAX_KEY_CACHE_SIZE is 1000 in the implementation
+            // We need to fill the cache to capacity and then add one more to trigger eviction
+            const cacheLimit = 1000;
+
+            // Fill the cache to exactly the limit
+            for (let i = 0; i < cacheLimit; i++) {
+                await encryptString(['cache', 'test', `key-${i}`], 'data');
             }
 
-            // Cache should contain all keys
-            expect(getEncryptionCacheStats().keyCount).toBe(pathCount);
+            // Cache should be at capacity
+            expect(getEncryptionCacheStats().keyCount).toBe(cacheLimit);
 
-            // Add one more key - should evict the oldest
-            await encryptString(['test', 'path', 'new-key'], 'data');
-            expect(getEncryptionCacheStats().keyCount).toBe(pathCount + 1);
+            // Add one more key - this should trigger eviction of the oldest entry
+            await encryptString(['cache', 'test', 'overflow-key'], 'data');
 
-            // Verify the cache is bounded (sanity check that eviction happens at limit)
-            // This doesn't test the actual 1000 limit, just that the mechanism works
+            // Cache should still be at capacity (old entry evicted, new entry added)
+            expect(getEncryptionCacheStats().keyCount).toBe(cacheLimit);
+        });
+
+        it('should handle edge case when Map.keys().next().value returns undefined', async () => {
+            // This tests the defensive guard at line 130: if (firstKey)
+            // In practice, this can never happen when keyCache.size >= 1000,
+            // but we test it for completeness by mocking the Map.prototype.keys method
+            clearKeyCache();
+
+            // Fill the cache to capacity
+            const cacheLimit = 1000;
+            for (let i = 0; i < cacheLimit; i++) {
+                await encryptString(['edge', 'test', `key-${i}`], 'data');
+            }
+
+            // Mock Map.prototype.keys to return an iterator that yields undefined
+            const mockIterator = {
+                next: () => ({ value: undefined, done: false }),
+                [Symbol.iterator]: function () {
+                    return this;
+                },
+            };
+            const keysSpy = vi.spyOn(Map.prototype, 'keys').mockReturnValue(
+                mockIterator as IterableIterator<string>
+            );
+
+            try {
+                // This should trigger the eviction path, but firstKey will be undefined
+                // The code handles this gracefully by checking if (firstKey)
+                await encryptString(['edge', 'test', 'trigger-edge-case'], 'data');
+
+                // The cache should have grown by 1 since eviction was skipped
+                // (firstKey was undefined so delete was not called)
+                expect(getEncryptionCacheStats().keyCount).toBe(cacheLimit + 1);
+            } finally {
+                // Restore the original method
+                keysSpy.mockRestore();
+            }
         });
     });
 
