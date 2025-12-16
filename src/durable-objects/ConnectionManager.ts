@@ -24,6 +24,7 @@ import type {
     ConnectionStats,
     ConnectionManagerConfig,
     ClientMessage,
+    AuthMessagePayload,
 } from './types';
 import { CloseCode, DEFAULT_CONFIG, normalizeMessage } from './types';
 import { verifyToken, initAuth } from '@/lib/auth';
@@ -101,6 +102,13 @@ export class ConnectionManager extends DurableObject<ConnectionManagerEnv> {
      */
     private authInitialized = false;
 
+    /**
+     * Auth timeout alarms for pending connections (HAP-360)
+     * Maps connectionId to alarm timestamp
+     * Used to close connections that don't authenticate in time
+     */
+    private pendingAuthAlarms: Map<string, number> = new Map();
+
     constructor(ctx: DurableObjectState, env: ConnectionManagerEnv) {
         super(ctx, env);
         this.connections = new Map();
@@ -112,6 +120,17 @@ export class ConnectionManager extends DurableObject<ConnectionManagerEnv> {
         this.ctx.getWebSockets().forEach((ws) => {
             const attachment = ws.deserializeAttachment() as ConnectionMetadata | null;
             if (attachment) {
+                // HAP-360: If connection was pending-auth when we hibernated, close it
+                // The auth timeout would have expired during hibernation anyway
+                if (attachment.authState === 'pending-auth') {
+                    try {
+                        ws.close(CloseCode.AUTH_TIMEOUT, 'Authentication timeout (hibernation recovery)');
+                    } catch {
+                        // Already closed
+                    }
+                    return; // Don't add to connections map
+                }
+
                 this.connections.set(ws, attachment);
                 // Restore userId from first connection
                 if (!this.userId) {
@@ -194,28 +213,15 @@ export class ConnectionManager extends DurableObject<ConnectionManagerEnv> {
             }
 
             // Parse handshake data from query params or headers
+            // HAP-360: Token may not be present (new auth flow uses message-based auth)
             const handshake = this.parseHandshake(url, request.headers);
-            if (!handshake) {
-                return new Response('Invalid handshake data', { status: 400 });
-            }
-
-            // Validate authentication
-            await this.ensureAuthInitialized();
-            const verified = await verifyToken(handshake.token);
-            if (!verified) {
-                return new Response('Authentication failed', { status: 401 });
-            }
-
-            // Validate client type requirements
-            const validation = this.validateClientType(handshake);
-            if (!validation.valid) {
-                return new Response(validation.error!, { status: 400 });
-            }
 
             // Check connection limits
             if (this.connections.size >= this.config.maxConnectionsPerUser) {
                 return new Response('Connection limit exceeded', { status: 429 });
             }
+
+            await this.ensureAuthInitialized();
 
             // Create WebSocket pair
             const webSocketPair = new WebSocketPair();
@@ -224,71 +230,133 @@ export class ConnectionManager extends DurableObject<ConnectionManagerEnv> {
 
             // Create connection metadata
             const connectionId = crypto.randomUUID();
-            const metadata: ConnectionMetadata = {
-                connectionId,
-                userId: verified.userId,
-                clientType: handshake.clientType,
-                sessionId: handshake.sessionId,
-                machineId: handshake.machineId,
-                connectedAt: Date.now(),
-                lastActivityAt: Date.now(),
-            };
 
-            // Build tags for efficient filtering
-            const tags = this.buildConnectionTags(metadata);
+            // HAP-360: Determine auth strategy based on whether token is present
+            // - Token present: Validate immediately (legacy flow for happy-cli with headers)
+            // - No token: Accept connection in pending-auth state, wait for auth message
+            if (handshake?.token) {
+                // =============================================
+                // LEGACY AUTH FLOW (token in URL/header)
+                // Used by happy-cli which can send custom headers
+                // =============================================
 
-            // Accept the WebSocket with hibernation support
-            this.ctx.acceptWebSocket(server, tags);
+                const verified = await verifyToken(handshake.token);
+                if (!verified) {
+                    return new Response('Authentication failed', { status: 401 });
+                }
 
-            // Serialize metadata for hibernation recovery
-            server.serializeAttachment(metadata);
+                // Validate client type requirements
+                const validation = this.validateClientType(handshake);
+                if (!validation.valid) {
+                    return new Response(validation.error!, { status: 400 });
+                }
 
-            // Store in our local map
-            this.connections.set(server, metadata);
-
-            // Set userId if this is the first connection
-            if (!this.userId) {
-                this.userId = verified.userId;
-            }
-
-            // Send connected confirmation in client format
-            // Uses {event, data} for compatibility with happy-cli and happy-app
-            const connectedMsg: ClientMessage = {
-                event: 'connected',
-                data: {
+                // Create fully authenticated metadata
+                const metadata: ConnectionMetadata = {
                     connectionId,
                     userId: verified.userId,
                     clientType: handshake.clientType,
                     sessionId: handshake.sessionId,
                     machineId: handshake.machineId,
-                    timestamp: Date.now(),
-                },
-            };
+                    connectedAt: Date.now(),
+                    lastActivityAt: Date.now(),
+                    authState: 'legacy',
+                };
 
-            // Queue the message to be sent after the connection is established
-            server.send(JSON.stringify(connectedMsg));
+                // Build tags for efficient filtering
+                const tags = this.buildConnectionTags(metadata);
 
-            // Broadcast machine online status to user-scoped connections (mobile apps)
-            // This allows the UI to show daemon online/offline status
-            if (handshake.clientType === 'machine-scoped' && handshake.machineId) {
-                this.broadcastClientMessage(
-                    {
-                        event: 'machine-update',
-                        data: {
-                            machineId: handshake.machineId,
-                            active: true,
-                            timestamp: Date.now(),
-                        },
+                // Accept the WebSocket with hibernation support
+                this.ctx.acceptWebSocket(server, tags);
+
+                // Serialize metadata for hibernation recovery
+                server.serializeAttachment(metadata);
+
+                // Store in our local map
+                this.connections.set(server, metadata);
+
+                // Set userId if this is the first connection
+                if (!this.userId) {
+                    this.userId = verified.userId;
+                }
+
+                // Send connected confirmation in client format
+                const connectedMsg: ClientMessage = {
+                    event: 'connected',
+                    data: {
+                        connectionId,
+                        userId: verified.userId,
+                        clientType: handshake.clientType,
+                        sessionId: handshake.sessionId,
+                        machineId: handshake.machineId,
+                        timestamp: Date.now(),
                     },
-                    { type: 'user-scoped-only' }
-                );
-            }
+                };
 
-            // Log connection (avoid excessive logging in production)
-            if (this.env.ENVIRONMENT !== 'production') {
-                console.log(
-                    `[ConnectionManager] New connection: ${connectionId}, type: ${handshake.clientType}, user: ${verified.userId}`
-                );
+                // Queue the message to be sent after the connection is established
+                server.send(JSON.stringify(connectedMsg));
+
+                // Broadcast machine online status to user-scoped connections
+                if (handshake.clientType === 'machine-scoped' && handshake.machineId) {
+                    this.broadcastClientMessage(
+                        {
+                            event: 'machine-update',
+                            data: {
+                                machineId: handshake.machineId,
+                                active: true,
+                                timestamp: Date.now(),
+                            },
+                        },
+                        { type: 'user-scoped-only' }
+                    );
+                }
+
+                // Log connection
+                if (this.env.ENVIRONMENT !== 'production') {
+                    console.log(
+                        `[ConnectionManager] New connection (legacy auth): ${connectionId}, type: ${handshake.clientType}, user: ${verified.userId}`
+                    );
+                }
+            } else {
+                // =============================================
+                // NEW AUTH FLOW (HAP-360)
+                // Token sent via message after connection
+                // Used by happy-app (browser/React Native can't send WS headers)
+                // =============================================
+
+                // Create pending-auth metadata (userId will be set after auth)
+                const metadata: ConnectionMetadata = {
+                    connectionId,
+                    userId: '', // Will be set after auth message
+                    clientType: 'user-scoped', // Will be updated after auth message
+                    connectedAt: Date.now(),
+                    lastActivityAt: Date.now(),
+                    authState: 'pending-auth',
+                };
+
+                // Accept the WebSocket with minimal tags (no user-specific tags until auth)
+                const tags = [`conn:${connectionId.slice(0, 8)}`, 'auth:pending'];
+
+                this.ctx.acceptWebSocket(server, tags);
+
+                // Serialize metadata for hibernation recovery
+                server.serializeAttachment(metadata);
+
+                // Store in our local map
+                this.connections.set(server, metadata);
+
+                // Set up auth timeout using Durable Object alarm
+                // If client doesn't authenticate within timeout, close connection
+                const authDeadline = Date.now() + this.config.authTimeoutMs;
+                this.pendingAuthAlarms.set(connectionId, authDeadline);
+                await this.scheduleAuthTimeout();
+
+                // Log pending connection
+                if (this.env.ENVIRONMENT !== 'production') {
+                    console.log(
+                        `[ConnectionManager] New connection (pending auth): ${connectionId}`
+                    );
+                }
             }
 
             return new Response(null, {
@@ -347,6 +415,60 @@ export class ConnectionManager extends DurableObject<ConnectionManagerEnv> {
             // This is an acknowledgement - forward it to the appropriate connection
             // For now, just log and continue (acks are typically responses, not requests)
             return;
+        }
+
+        // =============================================
+        // HAP-360: Handle auth message for pending-auth connections
+        // =============================================
+        if (metadata?.authState === 'pending-auth') {
+            // Only allow 'auth' messages from pending-auth connections
+            if (normalized.type === 'auth') {
+                const payload = normalized.payload as AuthMessagePayload | undefined;
+                if (!payload?.token) {
+                    const errorMsg: ClientMessage = {
+                        event: 'auth-error',
+                        data: {
+                            code: CloseCode.AUTH_FAILED,
+                            message: 'Auth message must include token',
+                            timestamp: Date.now(),
+                        },
+                    };
+                    try {
+                        ws.send(JSON.stringify(errorMsg));
+                    } catch {
+                        // Ignore
+                    }
+                    return;
+                }
+
+                // Process auth message
+                const result = await this.handleAuthMessage(ws, metadata, payload);
+                if (!result) {
+                    // Auth failed - close connection
+                    try {
+                        ws.close(CloseCode.AUTH_FAILED, 'Authentication failed');
+                    } catch {
+                        // Already closed
+                    }
+                }
+                return;
+            } else {
+                // Reject non-auth messages from pending-auth connections
+                const errorMsg: ClientMessage = {
+                    event: 'auth-error',
+                    data: {
+                        code: CloseCode.AUTH_FAILED,
+                        message: 'Connection not authenticated - send auth message first',
+                        timestamp: Date.now(),
+                    },
+                };
+                try {
+                    ws.send(JSON.stringify(errorMsg));
+                } catch {
+                    // Ignore
+                }
+                return;
+            }
         }
 
         // Create handler context for database operations
@@ -977,6 +1099,11 @@ export class ConnectionManager extends DurableObject<ConnectionManagerEnv> {
      * @returns True if connection matches filter
      */
     private matchesFilter(metadata: ConnectionMetadata, filter?: MessageFilter): boolean {
+        // HAP-360: Never broadcast to pending-auth connections
+        if (metadata.authState === 'pending-auth') {
+            return false;
+        }
+
         if (!filter || filter.type === 'all') {
             return true;
         }
@@ -990,6 +1117,17 @@ export class ConnectionManager extends DurableObject<ConnectionManagerEnv> {
 
             case 'machine':
                 return metadata.machineId === filter.machineId;
+
+            case 'machine-scoped-only':
+                // Send to user-scoped connections + specific machine-scoped connection
+                // This hybrid pattern notifies both mobile app (dashboard) and the CLI daemon
+                if (metadata.clientType === 'user-scoped') {
+                    return true;
+                }
+                if (metadata.clientType === 'machine-scoped') {
+                    return metadata.machineId === filter.machineId;
+                }
+                return false;
 
             case 'exclude':
                 return metadata.connectionId !== filter.connectionId;
@@ -1054,5 +1192,232 @@ export class ConnectionManager extends DurableObject<ConnectionManagerEnv> {
         stats.oldestConnection = oldest;
 
         return stats;
+    }
+
+    // =========================================================================
+    // HAP-360: MESSAGE-BASED AUTHENTICATION
+    // =========================================================================
+
+    /**
+     * Schedule an alarm for the earliest auth timeout (HAP-360)
+     *
+     * Durable Objects can only have one alarm at a time, so we schedule
+     * for the earliest deadline among all pending auth connections.
+     */
+    private async scheduleAuthTimeout(): Promise<void> {
+        if (this.pendingAuthAlarms.size === 0) {
+            return;
+        }
+
+        // Find the earliest deadline
+        let earliestDeadline = Infinity;
+        for (const deadline of this.pendingAuthAlarms.values()) {
+            if (deadline < earliestDeadline) {
+                earliestDeadline = deadline;
+            }
+        }
+
+        // Schedule alarm (Durable Objects can only have one alarm)
+        // This might overwrite an existing alarm, but we handle all expired
+        // connections when the alarm fires
+        if (earliestDeadline < Infinity) {
+            await this.ctx.storage.setAlarm(earliestDeadline);
+        }
+    }
+
+    /**
+     * Durable Object alarm handler (HAP-360)
+     *
+     * Called when an auth timeout expires. Closes all connections
+     * that haven't authenticated in time.
+     */
+    override async alarm(): Promise<void> {
+        const now = Date.now();
+
+        // Find all expired auth deadlines
+        const expiredConnectionIds: string[] = [];
+        for (const [connectionId, deadline] of this.pendingAuthAlarms.entries()) {
+            if (deadline <= now) {
+                expiredConnectionIds.push(connectionId);
+            }
+        }
+
+        // Close expired connections
+        for (const connectionId of expiredConnectionIds) {
+            this.pendingAuthAlarms.delete(connectionId);
+
+            // Find the WebSocket with this connection ID
+            for (const [ws, metadata] of this.connections.entries()) {
+                if (metadata.connectionId === connectionId && metadata.authState === 'pending-auth') {
+                    // Send auth timeout error
+                    const errorMsg: ClientMessage = {
+                        event: 'auth-error',
+                        data: {
+                            code: CloseCode.AUTH_TIMEOUT,
+                            message: 'Authentication timeout - auth message not received in time',
+                            timestamp: Date.now(),
+                        },
+                    };
+                    try {
+                        ws.send(JSON.stringify(errorMsg));
+                    } catch {
+                        // Ignore send errors
+                    }
+
+                    // Close the connection
+                    this.connections.delete(ws);
+                    try {
+                        ws.close(CloseCode.AUTH_TIMEOUT, 'Authentication timeout');
+                    } catch {
+                        // Already closed
+                    }
+
+                    if (this.env.ENVIRONMENT !== 'production') {
+                        console.log(`[ConnectionManager] Auth timeout: ${connectionId}`);
+                    }
+                    break;
+                }
+            }
+        }
+
+        // Reschedule for remaining pending auths
+        await this.scheduleAuthTimeout();
+    }
+
+    /**
+     * Handle auth message from client (HAP-360)
+     *
+     * This is called when a client in pending-auth state sends an auth message.
+     * Validates the token and transitions the connection to authenticated state.
+     *
+     * @param ws - The WebSocket that sent the auth message
+     * @param metadata - Current connection metadata
+     * @param payload - The auth message payload
+     * @returns Updated metadata if auth succeeded, null if failed
+     */
+    private async handleAuthMessage(
+        ws: WebSocket,
+        metadata: ConnectionMetadata,
+        payload: AuthMessagePayload
+    ): Promise<ConnectionMetadata | null> {
+        // Verify the token
+        const verified = await verifyToken(payload.token);
+        if (!verified) {
+            const errorMsg: ClientMessage = {
+                event: 'auth-error',
+                data: {
+                    code: CloseCode.AUTH_FAILED,
+                    message: 'Invalid authentication token',
+                    timestamp: Date.now(),
+                },
+            };
+            try {
+                ws.send(JSON.stringify(errorMsg));
+            } catch {
+                // Ignore
+            }
+            return null;
+        }
+
+        // Validate client type requirements
+        const clientType = payload.clientType || 'user-scoped';
+        if (clientType === 'session-scoped' && !payload.sessionId) {
+            const errorMsg: ClientMessage = {
+                event: 'auth-error',
+                data: {
+                    code: CloseCode.MISSING_SESSION_ID,
+                    message: 'Session ID required for session-scoped connections',
+                    timestamp: Date.now(),
+                },
+            };
+            try {
+                ws.send(JSON.stringify(errorMsg));
+            } catch {
+                // Ignore
+            }
+            return null;
+        }
+        if (clientType === 'machine-scoped' && !payload.machineId) {
+            const errorMsg: ClientMessage = {
+                event: 'auth-error',
+                data: {
+                    code: CloseCode.MISSING_MACHINE_ID,
+                    message: 'Machine ID required for machine-scoped connections',
+                    timestamp: Date.now(),
+                },
+            };
+            try {
+                ws.send(JSON.stringify(errorMsg));
+            } catch {
+                // Ignore
+            }
+            return null;
+        }
+
+        // Clear the auth timeout
+        this.pendingAuthAlarms.delete(metadata.connectionId);
+
+        // Update metadata with authenticated info
+        const updatedMetadata: ConnectionMetadata = {
+            ...metadata,
+            userId: verified.userId,
+            clientType: clientType,
+            sessionId: payload.sessionId,
+            machineId: payload.machineId,
+            authState: 'authenticated',
+            lastActivityAt: Date.now(),
+        };
+
+        // Update the attachment for hibernation recovery
+        ws.serializeAttachment(updatedMetadata);
+
+        // Update our map
+        this.connections.set(ws, updatedMetadata);
+
+        // Set userId if this is the first authenticated connection
+        if (!this.userId) {
+            this.userId = verified.userId;
+        }
+
+        // Send connected confirmation
+        const connectedMsg: ClientMessage = {
+            event: 'connected',
+            data: {
+                connectionId: metadata.connectionId,
+                userId: verified.userId,
+                clientType: clientType,
+                sessionId: payload.sessionId,
+                machineId: payload.machineId,
+                timestamp: Date.now(),
+            },
+        };
+        try {
+            ws.send(JSON.stringify(connectedMsg));
+        } catch {
+            // Ignore
+        }
+
+        // Broadcast machine online status if applicable
+        if (clientType === 'machine-scoped' && payload.machineId) {
+            this.broadcastClientMessage(
+                {
+                    event: 'machine-update',
+                    data: {
+                        machineId: payload.machineId,
+                        active: true,
+                        timestamp: Date.now(),
+                    },
+                },
+                { type: 'user-scoped-only' }
+            );
+        }
+
+        if (this.env.ENVIRONMENT !== 'production') {
+            console.log(
+                `[ConnectionManager] Auth completed: ${metadata.connectionId}, type: ${clientType}, user: ${verified.userId}`
+            );
+        }
+
+        return updatedMetadata;
     }
 }

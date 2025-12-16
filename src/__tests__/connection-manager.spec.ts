@@ -290,6 +290,7 @@ describe('ConnectionManager Durable Object', () => {
                 clientType: 'user-scoped',
                 connectedAt: Date.now() - 60000,
                 lastActivityAt: Date.now() - 30000,
+                authState: 'legacy',
             };
             existingWs._attachment = metadata;
             existingWs.deserializeAttachment = vi.fn(() => metadata);
@@ -689,6 +690,7 @@ describe('ConnectionManager Durable Object', () => {
                     clientType: 'user-scoped',
                     connectedAt: Date.now(),
                     lastActivityAt: Date.now(),
+                authState: 'legacy',
                 };
                 ws._attachment = metadata;
                 ws.deserializeAttachment = vi.fn(() => metadata);
@@ -727,6 +729,7 @@ describe('ConnectionManager Durable Object', () => {
                 clientType: 'user-scoped',
                 connectedAt: Date.now(),
                 lastActivityAt: Date.now(),
+                authState: 'legacy',
             };
             testWs._attachment = metadata;
             testWs.deserializeAttachment = vi.fn(() => testWs._attachment);
@@ -981,6 +984,7 @@ describe('ConnectionManager Durable Object', () => {
                     machineId: 'machine-1',
                     connectedAt: Date.now(),
                     lastActivityAt: Date.now(),
+                authState: 'legacy',
                 };
                 machineWs._attachment = machineMetadata;
                 machineWs.deserializeAttachment = vi.fn(() => machineWs._attachment);
@@ -993,6 +997,7 @@ describe('ConnectionManager Durable Object', () => {
                     clientType: 'user-scoped',
                     connectedAt: Date.now(),
                     lastActivityAt: Date.now(),
+                authState: 'legacy',
                 };
                 userWs._attachment = userMetadata;
                 userWs.deserializeAttachment = vi.fn(() => userWs._attachment);
@@ -1020,6 +1025,7 @@ describe('ConnectionManager Durable Object', () => {
                     clientType: 'user-scoped',
                     connectedAt: Date.now(),
                     lastActivityAt: Date.now(),
+                authState: 'legacy',
                 };
                 userWs._attachment = userMetadata;
                 userWs.deserializeAttachment = vi.fn(() => userWs._attachment);
@@ -1033,6 +1039,7 @@ describe('ConnectionManager Durable Object', () => {
                     machineId: 'target-machine',
                     connectedAt: Date.now(),
                     lastActivityAt: Date.now(),
+                authState: 'legacy',
                 };
                 machineWs._attachment = machineMetadata;
                 machineWs.deserializeAttachment = vi.fn(() => machineWs._attachment);
@@ -1059,6 +1066,7 @@ describe('ConnectionManager Durable Object', () => {
                     clientType: 'user-scoped',
                     connectedAt: Date.now(),
                     lastActivityAt: Date.now(),
+                authState: 'legacy',
                 };
                 ws1._attachment = metadata1;
                 // Ensure deserializeAttachment returns the attachment (simulating hibernation restore)
@@ -1072,6 +1080,7 @@ describe('ConnectionManager Durable Object', () => {
                     machineId: 'machine-1',
                     connectedAt: Date.now(),
                     lastActivityAt: Date.now(),
+                authState: 'legacy',
                 };
                 ws2._attachment = metadata2;
                 (ws2 as unknown as { deserializeAttachment: () => ConnectionMetadata }).deserializeAttachment = () => metadata2;
@@ -1104,6 +1113,7 @@ describe('ConnectionManager Durable Object', () => {
                     clientType: 'user-scoped',
                     connectedAt: Date.now(),
                     lastActivityAt: Date.now(),
+                authState: 'legacy',
                 };
                 ws1._attachment = metadata1;
                 ws1.deserializeAttachment = vi.fn(() => ws1._attachment);
@@ -1115,6 +1125,7 @@ describe('ConnectionManager Durable Object', () => {
                     clientType: 'user-scoped',
                     connectedAt: Date.now(),
                     lastActivityAt: Date.now(),
+                authState: 'legacy',
                 };
                 ws2._attachment = metadata2;
                 ws2.deserializeAttachment = vi.fn(() => ws2._attachment);
@@ -1143,6 +1154,7 @@ describe('ConnectionManager Durable Object', () => {
                     sessionId: 'sess-1',
                     connectedAt: Date.now(),
                     lastActivityAt: Date.now(),
+                authState: 'legacy',
                 };
                 cliWs._attachment = cliMetadata;
                 cliWs.deserializeAttachment = vi.fn(() => cliWs._attachment);
@@ -1154,6 +1166,7 @@ describe('ConnectionManager Durable Object', () => {
                     clientType: 'user-scoped',
                     connectedAt: Date.now(),
                     lastActivityAt: Date.now(),
+                authState: 'legacy',
                 };
                 mobileWs._attachment = mobileMetadata;
                 mobileWs.deserializeAttachment = vi.fn(() => mobileWs._attachment);
@@ -1179,6 +1192,7 @@ describe('ConnectionManager Durable Object', () => {
                     clientType: 'user-scoped',
                     connectedAt: Date.now(),
                     lastActivityAt: Date.now(),
+                authState: 'legacy',
                 };
                 mobileWs._attachment = mobileMetadata;
                 mobileWs.deserializeAttachment = vi.fn(() => mobileWs._attachment);
@@ -1191,6 +1205,7 @@ describe('ConnectionManager Durable Object', () => {
                     sessionId: 'target-session',
                     connectedAt: Date.now(),
                     lastActivityAt: Date.now(),
+                authState: 'legacy',
                 };
                 sessionWs._attachment = sessionMetadata;
                 sessionWs.deserializeAttachment = vi.fn(() => sessionWs._attachment);
@@ -1216,6 +1231,7 @@ describe('ConnectionManager Durable Object', () => {
                     clientType: 'user-scoped',
                     connectedAt: Date.now(),
                     lastActivityAt: Date.now(),
+                authState: 'legacy',
                 };
                 mobileWs._attachment = mobileMetadata;
                 mobileWs.deserializeAttachment = vi.fn(() => mobileWs._attachment);
@@ -1228,6 +1244,7 @@ describe('ConnectionManager Durable Object', () => {
                     machineId: 'target-machine',
                     connectedAt: Date.now(),
                     lastActivityAt: Date.now(),
+                authState: 'legacy',
                 };
                 machineWs._attachment = machineMetadata;
                 machineWs.deserializeAttachment = vi.fn(() => machineWs._attachment);
@@ -1260,6 +1277,7 @@ describe('ConnectionManager Durable Object', () => {
                 clientType: 'user-scoped',
                 connectedAt: Date.now(),
                 lastActivityAt: Date.now(),
+                authState: 'legacy',
             };
             ws._attachment = metadata;
             ws.deserializeAttachment = vi.fn(() => ws._attachment);
@@ -1282,6 +1300,7 @@ describe('ConnectionManager Durable Object', () => {
                 machineId: 'machine-1',
                 connectedAt: Date.now(),
                 lastActivityAt: Date.now(),
+                authState: 'legacy',
             };
             machineWs._attachment = machineMetadata;
             machineWs.deserializeAttachment = vi.fn(() => machineWs._attachment);
@@ -1293,6 +1312,7 @@ describe('ConnectionManager Durable Object', () => {
                 clientType: 'user-scoped',
                 connectedAt: Date.now(),
                 lastActivityAt: Date.now(),
+                authState: 'legacy',
             };
             userWs._attachment = userMetadata;
             userWs.deserializeAttachment = vi.fn(() => userWs._attachment);
@@ -1325,6 +1345,7 @@ describe('ConnectionManager Durable Object', () => {
                 clientType: 'user-scoped',
                 connectedAt: Date.now(),
                 lastActivityAt: Date.now(),
+                authState: 'legacy',
             };
             ws._attachment = metadata;
             ws.deserializeAttachment = vi.fn(() => ws._attachment);
@@ -1354,6 +1375,7 @@ describe('ConnectionManager Durable Object', () => {
                 clientType: 'user-scoped',
                 connectedAt: Date.now(),
                 lastActivityAt: Date.now(),
+                authState: 'legacy',
             };
             ws._attachment = metadata;
             ws.deserializeAttachment = vi.fn(() => ws._attachment);
@@ -1409,6 +1431,7 @@ describe('ConnectionManager Durable Object', () => {
                 clientType: 'user-scoped',
                 connectedAt: Date.now() - 60000,
                 lastActivityAt: Date.now(),
+                authState: 'legacy',
             };
             ws1._attachment = metadata1;
             ws1.deserializeAttachment = vi.fn(() => ws1._attachment);
@@ -1422,6 +1445,7 @@ describe('ConnectionManager Durable Object', () => {
                 sessionId: 'sess-1',
                 connectedAt: Date.now() - 30000,
                 lastActivityAt: Date.now(),
+                authState: 'legacy',
             };
             ws2._attachment = metadata2;
             ws2.deserializeAttachment = vi.fn(() => ws2._attachment);
@@ -1435,6 +1459,7 @@ describe('ConnectionManager Durable Object', () => {
                 machineId: 'machine-1',
                 connectedAt: Date.now(),
                 lastActivityAt: Date.now(),
+                authState: 'legacy',
             };
             ws3._attachment = metadata3;
             ws3.deserializeAttachment = vi.fn(() => ws3._attachment);
@@ -1581,6 +1606,7 @@ describe('ConnectionManager Durable Object', () => {
                 clientType: 'user-scoped',
                 connectedAt: Date.now() - 60000,
                 lastActivityAt: Date.now(),
+                authState: 'legacy',
             };
             ws1._attachment = metadata1;
             ws1.deserializeAttachment = vi.fn(() => ws1._attachment);
@@ -1593,6 +1619,7 @@ describe('ConnectionManager Durable Object', () => {
                 sessionId: 'sess-1',
                 connectedAt: Date.now() - 30000,
                 lastActivityAt: Date.now(),
+                authState: 'legacy',
             };
             ws2._attachment = metadata2;
             ws2.deserializeAttachment = vi.fn(() => ws2._attachment);
@@ -1605,6 +1632,7 @@ describe('ConnectionManager Durable Object', () => {
                 machineId: 'machine-1',
                 connectedAt: Date.now(),
                 lastActivityAt: Date.now(),
+                authState: 'legacy',
             };
             ws3._attachment = metadata3;
             ws3.deserializeAttachment = vi.fn(() => ws3._attachment);
@@ -1646,6 +1674,7 @@ describe('ConnectionManager Durable Object', () => {
                 clientType: 'user-scoped',
                 connectedAt: Date.now(),
                 lastActivityAt: Date.now(),
+                authState: 'legacy',
             };
             userWs._attachment = userMetadata;
             (userWs as unknown as { deserializeAttachment: () => ConnectionMetadata }).deserializeAttachment = () => userMetadata;
@@ -1695,6 +1724,7 @@ describe('ConnectionManager Durable Object', () => {
                 clientType: 'user-scoped',
                 connectedAt: Date.now(),
                 lastActivityAt: Date.now(),
+                authState: 'legacy',
             };
             ws._attachment = metadata;
             ws.deserializeAttachment = vi.fn(() => ws._attachment);
@@ -1733,6 +1763,7 @@ describe('ConnectionManager Durable Object', () => {
                 clientType: 'user-scoped',
                 connectedAt: Date.now(),
                 lastActivityAt: Date.now(),
+                authState: 'legacy',
             };
             ws._attachment = metadata;
             ws.deserializeAttachment = vi.fn(() => ws._attachment);
@@ -1775,6 +1806,7 @@ describe('ConnectionManager Durable Object', () => {
                 sessionId: 'sess-1',
                 connectedAt: Date.now(),
                 lastActivityAt: Date.now(),
+                authState: 'legacy',
             };
             ws1._attachment = metadata1;
             ws1.deserializeAttachment = vi.fn(() => ws1._attachment);
@@ -1786,6 +1818,7 @@ describe('ConnectionManager Durable Object', () => {
                 clientType: 'user-scoped',
                 connectedAt: Date.now(),
                 lastActivityAt: Date.now(),
+                authState: 'legacy',
             };
             ws2._attachment = metadata2;
             ws2.deserializeAttachment = vi.fn(() => ws2._attachment);
@@ -1820,6 +1853,7 @@ describe('ConnectionManager Durable Object', () => {
                 sessionId: 'sess-1',
                 connectedAt: Date.now(),
                 lastActivityAt: Date.now(),
+                authState: 'legacy',
             };
             ws1._attachment = metadata1;
             ws1.deserializeAttachment = vi.fn(() => ws1._attachment);
@@ -1831,6 +1865,7 @@ describe('ConnectionManager Durable Object', () => {
                 clientType: 'user-scoped',
                 connectedAt: Date.now(),
                 lastActivityAt: Date.now(),
+                authState: 'legacy',
             };
             ws2._attachment = metadata2;
             ws2.deserializeAttachment = vi.fn(() => ws2._attachment);
@@ -1878,6 +1913,7 @@ describe('ConnectionManager Durable Object', () => {
                 clientType: 'user-scoped',
                 connectedAt: Date.now(),
                 lastActivityAt: Date.now(),
+                authState: 'legacy',
             };
             ws1._attachment = metadata1;
             ws1.deserializeAttachment = vi.fn(() => ws1._attachment);
@@ -1892,6 +1928,7 @@ describe('ConnectionManager Durable Object', () => {
                 clientType: 'user-scoped',
                 connectedAt: Date.now(),
                 lastActivityAt: Date.now(),
+                authState: 'legacy',
             };
             ws2._attachment = metadata2;
             ws2.deserializeAttachment = vi.fn(() => ws2._attachment);
@@ -1923,6 +1960,7 @@ describe('ConnectionManager Durable Object', () => {
                 clientType: 'user-scoped',
                 connectedAt: Date.now(),
                 lastActivityAt: Date.now(),
+                authState: 'legacy',
             };
             ws._attachment = metadata;
             ws.deserializeAttachment = vi.fn(() => ws._attachment);

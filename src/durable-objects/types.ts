@@ -23,6 +23,16 @@
 export type ClientType = 'user-scoped' | 'session-scoped' | 'machine-scoped';
 
 /**
+ * Authentication state for WebSocket connections (HAP-360)
+ *
+ * Connections can be in one of three states:
+ * - pending-auth: Connection established, waiting for auth message
+ * - authenticated: Auth message validated, ready for normal operation
+ * - legacy: Authenticated via URL/header (backward compatibility with happy-cli)
+ */
+export type ConnectionAuthState = 'pending-auth' | 'authenticated' | 'legacy';
+
+/**
  * Connection metadata stored with each WebSocket connection
  *
  * This is serialized via `WebSocket.serializeAttachment()` and restored on DO wake-up.
@@ -49,6 +59,14 @@ export interface ConnectionMetadata {
 
     /** Last activity timestamp (updated on each message) */
     lastActivityAt: number;
+
+    /**
+     * Authentication state (HAP-360)
+     * - 'pending-auth': Waiting for auth message (new handshake flow)
+     * - 'authenticated': Auth complete via message handshake
+     * - 'legacy': Auth via URL/header (backward compatibility)
+     */
+    authState: ConnectionAuthState;
 }
 
 /**
@@ -118,6 +136,9 @@ export const CloseCode = {
 
     /** Duplicate connection detected */
     DUPLICATE_CONNECTION: 4006,
+
+    /** Authentication timeout - client didn't send auth message in time (HAP-360) */
+    AUTH_TIMEOUT: 4007,
 } as const;
 
 /**
@@ -382,6 +403,13 @@ export interface ConnectionManagerConfig {
      * @default 1048576 (1MB)
      */
     maxMessageSize: number;
+
+    /**
+     * Auth timeout in milliseconds (HAP-360)
+     * How long to wait for auth message after connection before closing
+     * @default 5000 (5 seconds)
+     */
+    authTimeoutMs: number;
 }
 
 /**
@@ -392,7 +420,28 @@ export const DEFAULT_CONFIG: ConnectionManagerConfig = {
     connectionTimeoutMs: 5 * 60 * 1000, // 5 minutes
     enableAutoResponse: true,
     maxMessageSize: 1024 * 1024, // 1MB
+    authTimeoutMs: 5000, // 5 seconds (HAP-360)
 };
+
+/**
+ * Auth message payload from client (HAP-360)
+ *
+ * Sent as the first message after WebSocket connection to authenticate.
+ * This replaces sending the token in URL query parameters.
+ */
+export interface AuthMessagePayload {
+    /** Authentication token from privacy-kit */
+    token: string;
+
+    /** Type of client connection */
+    clientType: ClientType;
+
+    /** Session ID (required for session-scoped connections) */
+    sessionId?: string;
+
+    /** Machine ID (required for machine-scoped connections) */
+    machineId?: string;
+}
 
 // =============================================================================
 // EVENT BROADCASTING TYPES
