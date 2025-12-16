@@ -180,23 +180,6 @@ describe('connectRoutes', () => {
     });
 
     describe('POST /v1/connect/github/webhook', () => {
-        it('should return 500 when raw body is not available', async () => {
-            const response = await app.inject({
-                method: 'POST',
-                url: '/v1/connect/github/webhook',
-                headers: {
-                    'x-hub-signature-256': 'sha256=test-signature',
-                    'x-github-event': 'push',
-                    'x-github-delivery': 'test-delivery-id',
-                    'Content-Type': 'application/json',
-                },
-                payload: { test: 'data' },
-            });
-
-            // The test framework might not preserve rawBody, so this may return 500
-            expect([200, 500]).toContain(response.statusCode);
-        });
-
         it('should return 500 when webhooks not configured', async () => {
             vi.mocked(getWebhooks).mockReturnValue(null);
 
@@ -212,8 +195,9 @@ describe('connectRoutes', () => {
                 payload: { test: 'data' },
             });
 
-            // May return 500 due to rawBody or webhook configuration
-            expect([200, 500]).toContain(response.statusCode);
+            expect(response.statusCode).toBe(500);
+            const body = JSON.parse(response.payload);
+            expect(body.error).toBe('Webhooks not configured');
         });
     });
 

@@ -127,8 +127,9 @@ describe('voiceRoutes', () => {
                 payload: {}
             });
 
-            // Zod validation errors return 500 in this Fastify setup
-            expect([400, 500]).toContain(response.statusCode);
+            // Fastify with Zod returns 500 for validation errors in this setup
+            // (may vary based on error handler configuration)
+            expect(response.statusCode).toBe(500);
         });
     });
 
