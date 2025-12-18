@@ -11,6 +11,7 @@ import {
     encryptString,
     decryptString,
 } from '@/lib/encryption';
+import { getEventRouter, buildUpdateAccountUpdate } from '@/lib/eventRouter';
 import {
     GitHubOAuthParamsResponseSchema,
     GitHubOAuthCallbackQuerySchema,
@@ -84,6 +85,7 @@ interface Env {
     GITHUB_REDIRECT_URL?: string;
     GITHUB_WEBHOOK_SECRET?: string;
     HANDY_MASTER_SECRET: string;
+    CONNECTION_MANAGER: DurableObjectNamespace;
 }
 
 /**
@@ -466,17 +468,40 @@ connectRoutes.use('/v1/connect/github', authMiddleware());
 
 // @ts-expect-error - OpenAPI handler type inference doesn't carry Variables from middleware
 connectRoutes.openapi(githubDisconnectRoute, async (c) => {
-    // TODO: Implement GitHub disconnect - will use these when implemented
-    // const userId = (c as unknown as Context<{ Bindings: Env; Variables: AuthVariables }>).get('userId');
-    // const db = getDb(c.env.DB);
-    void c.env.DB; // Silence unused warning
+    const userId = (c as unknown as Context<{ Bindings: Env; Variables: AuthVariables }>).get('userId');
+    const db = getDb(c.env.DB);
 
-    // TODO: Implement GitHub disconnect
-    // 1. Remove GitHub user link
-    // 2. Clear stored tokens
-    // 3. Clean up related data
+    // Step 1: Find user's GitHub connection
+    const account = await db.query.accounts.findFirst({
+        where: (accounts, { eq }) => eq(accounts.id, userId),
+    });
 
-    // Placeholder: return success
+    if (!account || !account.githubUserId) {
+        return c.json({ error: 'GitHub account not connected' }, 404);
+    }
+
+    const githubUserId = account.githubUserId;
+    const newSeq = account.seq + 1;
+
+    // Step 2: Clear GitHub link from account and increment seq (single UPDATE)
+    await db
+        .update(schema.accounts)
+        .set({
+            githubUserId: null,
+            seq: newSeq,
+            updatedAt: new Date(),
+        })
+        .where(eq(schema.accounts.id, userId));
+
+    // Step 3: Delete GitHub user record (clears stored tokens)
+    await db.delete(schema.githubUsers).where(eq(schema.githubUsers.id, githubUserId));
+
+    const eventRouter = getEventRouter(c.env);
+    await eventRouter.emitUpdate({
+        userId,
+        payload: buildUpdateAccountUpdate(userId, { github: null }, newSeq, createId()),
+    });
+
     return c.json({ success: true as const });
 });
 
