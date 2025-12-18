@@ -438,6 +438,7 @@ export function createTestAccount(overrides: Partial<{
     feedSeq: number;
     settings: string;
     settingsVersion: number;
+    githubUserId: string | null;
     createdAt: Date;
     updatedAt: Date;
 }> = {}) {
@@ -452,6 +453,7 @@ export function createTestAccount(overrides: Partial<{
         username: overrides.username ?? `testuser_${Date.now()}`,
         settings: overrides.settings ?? '{}',
         settingsVersion: overrides.settingsVersion ?? 1,
+        githubUserId: overrides.githubUserId ?? null,
         createdAt: overrides.createdAt ?? now,
         updatedAt: overrides.updatedAt ?? now,
     };
