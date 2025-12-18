@@ -321,6 +321,16 @@ export function connectRoutes(app: Fastify) {
     }, async (request, reply) => {
         const userId = request.userId;
         const ctx = Context.create(userId);
+
+        // Check if user has GitHub connection before attempting disconnect
+        const account = await db.account.findUnique({
+            where: { id: userId },
+            select: { githubUserId: true }
+        });
+        if (!account?.githubUserId) {
+            return reply.code(404).send({ error: 'GitHub account not connected' });
+        }
+
         try {
             await githubDisconnect(ctx);
             return reply.send({ success: true });

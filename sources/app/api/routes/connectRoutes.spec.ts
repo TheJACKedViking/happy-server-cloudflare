@@ -12,6 +12,9 @@ vi.mock('@/storage/db', () => ({
             upsert: vi.fn(),
             delete: vi.fn(),
         },
+        account: {
+            findUnique: vi.fn(),
+        },
     },
 }));
 
@@ -420,6 +423,7 @@ describe('connectRoutes', () => {
 
     describe('DELETE /v1/connect/github', () => {
         it('should disconnect GitHub account successfully', async () => {
+            vi.mocked(db.account.findUnique).mockResolvedValue({ githubUserId: 'github-123' } as any);
             vi.mocked(githubDisconnect).mockResolvedValue(undefined);
 
             const response = await app.inject({
@@ -433,7 +437,23 @@ describe('connectRoutes', () => {
             expect(body.success).toBe(true);
         });
 
+        it('should return 404 when no GitHub connection exists', async () => {
+            vi.mocked(db.account.findUnique).mockResolvedValue({ githubUserId: null } as any);
+
+            const response = await app.inject({
+                method: 'DELETE',
+                url: '/v1/connect/github',
+                headers: authHeader(),
+            });
+
+            expect(response.statusCode).toBe(404);
+            const body = JSON.parse(response.payload);
+            expect(body.error).toBe('GitHub account not connected');
+            expect(githubDisconnect).not.toHaveBeenCalled();
+        });
+
         it('should return 500 on disconnect error', async () => {
+            vi.mocked(db.account.findUnique).mockResolvedValue({ githubUserId: 'github-123' } as any);
             vi.mocked(githubDisconnect).mockRejectedValue(new Error('Disconnect failed'));
 
             const response = await app.inject({
@@ -457,6 +477,7 @@ describe('connectRoutes', () => {
         });
 
         it('should call githubDisconnect with correct context', async () => {
+            vi.mocked(db.account.findUnique).mockResolvedValue({ githubUserId: 'github-456' } as any);
             vi.mocked(githubDisconnect).mockResolvedValue(undefined);
 
             const response = await app.inject({
