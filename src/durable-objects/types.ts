@@ -11,6 +11,51 @@
  * @module durable-objects/types
  */
 
+// =============================================================================
+// SHARED PROTOCOL TYPES
+// =============================================================================
+
+/**
+ * Import shared protocol types from @happy/protocol
+ *
+ * CRITICAL: These types use the correct field names (e.g., 'sid' not 'sessionId')
+ * that clients expect. Using these ensures field name consistency across the stack.
+ *
+ * @see HAP-387 - Integrate @happy/protocol in happy-server-workers
+ * @see HAP-383 - RFC for shared protocol types
+ */
+import {
+    // Update event schemas and types
+    ApiUpdateSchema,
+    type ApiUpdate,
+    type ApiUpdateType,
+    // Ephemeral event schemas and types
+    ApiEphemeralUpdateSchema,
+    type ApiEphemeralUpdate,
+    type ApiEphemeralUpdateType,
+    // Payload container types
+    UpdatePayloadSchema,
+    type UpdatePayload,
+    type EphemeralPayload,
+    // Common types
+    type GitHubProfile,
+} from '@happy/protocol';
+
+/**
+ * Re-export shared types for backward compatibility
+ *
+ * Local code can continue using `UpdateEvent` and `EphemeralEvent` names.
+ * These now point to the shared protocol types with correct field names.
+ */
+export type UpdateEvent = ApiUpdate;
+export type EphemeralEvent = ApiEphemeralUpdate;
+
+/**
+ * Re-export schemas for runtime validation
+ */
+export { ApiUpdateSchema, ApiEphemeralUpdateSchema, UpdatePayloadSchema };
+export type { ApiUpdate, ApiUpdateType, ApiEphemeralUpdate, ApiEphemeralUpdateType, UpdatePayload, EphemeralPayload, GitHubProfile };
+
 /**
  * Client connection types supported by the WebSocket system
  *
@@ -453,211 +498,6 @@ export interface AuthMessagePayload {
 // =============================================================================
 // EVENT BROADCASTING TYPES
 // =============================================================================
-
-/**
- * GitHub profile data for account updates
- */
-export interface GitHubProfile {
-    id: number;
-    login: string;
-    name: string | null;
-    avatar_url: string;
-}
-
-/**
- * Update events are persistent state changes that should be synced to clients.
- * These represent mutations to the database that clients need to know about.
- *
- * Mirrors the UpdateEvent type from happy-server/sources/app/events/eventRouter.ts
- */
-export type UpdateEvent =
-    | {
-          type: 'new-message';
-          sessionId: string;
-          message: {
-              id: string;
-              seq: number;
-              content: unknown;
-              localId: string | null;
-              createdAt: number;
-              updatedAt: number;
-          };
-      }
-    | {
-          type: 'new-session';
-          sessionId: string;
-          seq: number;
-          metadata: string;
-          metadataVersion: number;
-          agentState: string | null;
-          agentStateVersion: number;
-          dataEncryptionKey: string | null;
-          active: boolean;
-          activeAt: number;
-          createdAt: number;
-          updatedAt: number;
-      }
-    | {
-          type: 'update-session';
-          sessionId: string;
-          metadata?: {
-              value: string | null;
-              version: number;
-          } | null;
-          agentState?: {
-              value: string | null;
-              version: number;
-          } | null;
-      }
-    | {
-          type: 'delete-session';
-          sessionId: string;
-      }
-    | {
-          type: 'update-account';
-          userId: string;
-          settings?: {
-              value: string | null;
-              version: number;
-          } | null;
-          github?: GitHubProfile | null;
-      }
-    | {
-          type: 'new-machine';
-          machineId: string;
-          seq: number;
-          metadata: string;
-          metadataVersion: number;
-          daemonState: string | null;
-          daemonStateVersion: number;
-          dataEncryptionKey: string | null;
-          active: boolean;
-          activeAt: number;
-          createdAt: number;
-          updatedAt: number;
-      }
-    | {
-          type: 'update-machine';
-          machineId: string;
-          metadata?: {
-              value: string;
-              version: number;
-          };
-          daemonState?: {
-              value: string;
-              version: number;
-          };
-          activeAt?: number;
-      }
-    | {
-          type: 'new-artifact';
-          artifactId: string;
-          seq: number;
-          header: string;
-          headerVersion: number;
-          body: string;
-          bodyVersion: number;
-          dataEncryptionKey: string | null;
-          createdAt: number;
-          updatedAt: number;
-      }
-    | {
-          type: 'update-artifact';
-          artifactId: string;
-          header?: {
-              value: string;
-              version: number;
-          };
-          body?: {
-              value: string;
-              version: number;
-          };
-      }
-    | {
-          type: 'delete-artifact';
-          artifactId: string;
-      }
-    | {
-          type: 'relationship-updated';
-          uid: string;
-          status: 'none' | 'requested' | 'pending' | 'friend' | 'rejected';
-          timestamp: number;
-      }
-    | {
-          type: 'new-feed-post';
-          id: string;
-          body: unknown;
-          cursor: string;
-          createdAt: number;
-      }
-    | {
-          type: 'kv-batch-update';
-          changes: Array<{
-              key: string;
-              value: string | null;
-              version: number;
-          }>;
-      };
-
-/**
- * Ephemeral events are transient status updates that don't need persistence.
- * These are real-time indicators of activity (typing, presence, etc.)
- *
- * Mirrors the EphemeralEvent type from happy-server/sources/app/events/eventRouter.ts
- */
-export type EphemeralEvent =
-    | {
-          type: 'activity';
-          id: string;
-          active: boolean;
-          activeAt: number;
-          thinking?: boolean;
-      }
-    | {
-          type: 'machine-activity';
-          id: string;
-          active: boolean;
-          activeAt: number;
-      }
-    | {
-          type: 'usage';
-          id: string;
-          key: string;
-          tokens: Record<string, number>;
-          cost: Record<string, number>;
-          timestamp: number;
-      }
-    | {
-          type: 'machine-status';
-          machineId: string;
-          online: boolean;
-          timestamp: number;
-      };
-
-/**
- * Payload wrapper for update events.
- * Contains sequencing info for ordered delivery.
- */
-export interface UpdatePayload {
-    /** Unique update ID */
-    id: string;
-    /** Sequence number for ordering */
-    seq: number;
-    /** Event body with type discriminator */
-    body: {
-        t: UpdateEvent['type'];
-        [key: string]: unknown;
-    };
-    /** When the update was created */
-    createdAt: number;
-}
-
-/**
- * Payload wrapper for ephemeral events.
- * Simpler than UpdatePayload since ordering isn't critical.
- */
-export interface EphemeralPayload {
-    /** Event type discriminator */
-    type: EphemeralEvent['type'];
-    [key: string]: unknown;
-}
+// NOTE: UpdateEvent, EphemeralEvent, UpdatePayload, EphemeralPayload, and GitHubProfile
+// are now imported from @happy/protocol (see top of file).
+// This ensures consistent field names across the stack (HAP-387).

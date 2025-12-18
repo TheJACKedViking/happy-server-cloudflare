@@ -20,7 +20,7 @@ import {
     accounts,
 } from '@/db/schema';
 import { createId } from '@/utils/id';
-import type { ClientMessage, MessageFilter, UpdateEvent, EphemeralEvent } from './types';
+import type { ClientMessage, MessageFilter, UpdatePayload, EphemeralEvent } from './types';
 
 /**
  * Handler result with optional response and broadcast
@@ -152,14 +152,14 @@ export async function handleSessionMetadataUpdate(
                     seq: account?.seq ?? 0,
                     body: {
                         t: 'update-session',
-                        sessionId: sid,
+                        id: sid,
                         metadata: {
                             value: metadata,
                             version: expectedVersion + 1,
                         },
                     },
                     createdAt: Date.now(),
-                } satisfies UpdatePayloadData,
+                } satisfies UpdatePayload,
             },
             filter: { type: 'all-interested-in-session', sessionId: sid },
         },
@@ -263,14 +263,14 @@ export async function handleSessionStateUpdate(
                     seq: account?.seq ?? 0,
                     body: {
                         t: 'update-session',
-                        sessionId: sid,
+                        id: sid,
                         agentState: {
                             value: agentState,
                             version: expectedVersion + 1,
                         },
                     },
                     createdAt: Date.now(),
-                } satisfies UpdatePayloadData,
+                } satisfies UpdatePayload,
             },
             filter: { type: 'all-interested-in-session', sessionId: sid },
         },
@@ -491,7 +491,7 @@ export async function handleSessionMessage(
                     seq: account?.seq ?? 0,
                     body: {
                         t: 'new-message',
-                        sessionId: sid,
+                        sid,
                         message: {
                             id: msgId,
                             seq: msgSeq,
@@ -502,7 +502,7 @@ export async function handleSessionMessage(
                         },
                     },
                     createdAt: now,
-                } satisfies UpdatePayloadData,
+                } satisfies UpdatePayload,
             },
             filter: { type: 'all-interested-in-session', sessionId: sid },
         },
@@ -673,7 +673,7 @@ export async function handleMachineMetadataUpdate(
                         },
                     },
                     createdAt: Date.now(),
-                } satisfies UpdatePayloadData,
+                } satisfies UpdatePayload,
             },
             filter: { type: 'machine-scoped-only', machineId },
         },
@@ -782,7 +782,7 @@ export async function handleMachineStateUpdate(
                         activeAt: Date.now(),
                     },
                     createdAt: Date.now(),
-                } satisfies UpdatePayloadData,
+                } satisfies UpdatePayload,
             },
             filter: { type: 'machine-scoped-only', machineId },
         },
@@ -1003,7 +1003,7 @@ export async function handleArtifactUpdate(
                         ...(bodyUpdate && { body: bodyUpdate }),
                     },
                     createdAt: Date.now(),
-                } satisfies UpdatePayloadData,
+                } satisfies UpdatePayload,
             },
             filter: { type: 'user-scoped-only' },
         },
@@ -1127,7 +1127,7 @@ export async function handleArtifactCreate(
                         updatedAt: artifact.updatedAt.getTime(),
                     },
                     createdAt: now,
-                } satisfies UpdatePayloadData,
+                } satisfies UpdatePayload,
             },
             filter: { type: 'user-scoped-only' },
         },
@@ -1185,7 +1185,7 @@ export async function handleArtifactDelete(
                         artifactId,
                     },
                     createdAt: Date.now(),
-                } satisfies UpdatePayloadData,
+                } satisfies UpdatePayload,
             },
             filter: { type: 'user-scoped-only' },
         },
@@ -1368,6 +1368,8 @@ export async function handleUsageReport(
     };
 
     // Emit usage ephemeral if sessionId provided
+    // Note: tokens/cost are typed loosely to accept various CLI payload structures.
+    // The protocol schema will validate at runtime if needed.
     if (sessionId) {
         result.ephemeral = {
             message: {
@@ -1379,7 +1381,7 @@ export async function handleUsageReport(
                     tokens,
                     cost,
                     timestamp: now,
-                } satisfies EphemeralEvent,
+                } as EphemeralEvent,
             },
             filter: { type: 'user-scoped-only' },
         };
@@ -1391,16 +1393,5 @@ export async function handleUsageReport(
 // =============================================================================
 // HELPER TYPES
 // =============================================================================
-
-/**
- * Update payload data structure (matches client format)
- */
-interface UpdatePayloadData {
-    id: string;
-    seq: number;
-    body: {
-        t: UpdateEvent['type'];
-        [key: string]: unknown;
-    };
-    createdAt: number;
-}
+// NOTE: UpdatePayload is now imported from @happy/protocol via ./types
+// This ensures consistent field names across the stack (HAP-387).

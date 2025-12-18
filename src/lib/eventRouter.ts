@@ -633,6 +633,8 @@ export function buildMachineActivityEphemeral(
  * Build a 'usage' ephemeral payload.
  *
  * Sent to report token/cost usage for a session.
+ * Note: tokens/cost are typed loosely to accept various CLI payload structures.
+ * The protocol schema will validate at runtime if needed.
  */
 export function buildUsageEphemeral(
     sessionId: string,
@@ -647,7 +649,7 @@ export function buildUsageEphemeral(
         tokens,
         cost,
         timestamp: Date.now(),
-    };
+    } as EphemeralPayload;
 }
 
 /**
