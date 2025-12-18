@@ -884,12 +884,14 @@ export class ConnectionManager extends DurableObject<ConnectionManagerEnv> {
                     });
 
                     // Broadcast to all connections - the one with matching pending ack will handle it
+                    // Note: For rpc-response messages, the actual response payload is in normalized.ack
+                    // (from ClientMessage.ack field), NOT in normalized.payload (from ClientMessage.data)
                     const filter = { type: 'all' as const };
                     const delivered = this.broadcastClientMessage(
                         {
                             event: 'rpc-response',
                             ackId: normalized.messageId,
-                            ack: normalized.payload,
+                            ack: normalized.ack,
                         },
                         filter
                     );
