@@ -455,6 +455,22 @@ describe('connectRoutes', () => {
 
             expect(response.statusCode).toBe(401);
         });
+
+        it('should call githubDisconnect with correct context', async () => {
+            vi.mocked(githubDisconnect).mockResolvedValue(undefined);
+
+            const response = await app.inject({
+                method: 'DELETE',
+                url: '/v1/connect/github',
+                headers: authHeader(),
+            });
+
+            expect(response.statusCode).toBe(200);
+            expect(githubDisconnect).toHaveBeenCalledTimes(1);
+            expect(githubDisconnect).toHaveBeenCalledWith(
+                expect.objectContaining({ userId: TEST_USER_ID })
+            );
+        });
     });
 
     describe('POST /v1/connect/:vendor/register', () => {
