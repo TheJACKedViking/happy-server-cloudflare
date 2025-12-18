@@ -358,7 +358,10 @@ connectRoutes.openapi(githubOAuthCallbackRoute, async (c) => {
         // Extract name parts from GitHub profile
         const nameParts = separateName(githubProfile.name);
 
-        // Link GitHub account to user and update profile
+        // Get current seq for update event
+        const newSeq = existingAccount.seq + 1;
+
+        // Link GitHub account to user, update profile, and increment seq
         await db
             .update(schema.accounts)
             .set({
@@ -366,11 +369,36 @@ connectRoutes.openapi(githubOAuthCallbackRoute, async (c) => {
                 username: githubProfile.login,
                 firstName: nameParts.firstName,
                 lastName: nameParts.lastName,
+                seq: newSeq,
                 updatedAt: new Date(),
             })
             .where(eq(schema.accounts.id, userId));
 
-        // Step 6: Redirect to app with success
+        // Step 6: Broadcast WebSocket notification to connected clients
+        // Convert GitHub API profile to protocol GitHubProfile format
+        const protocolProfile = {
+            id: githubProfile.id,
+            login: githubProfile.login,
+            name: githubProfile.name ?? githubProfile.login, // Fallback to login if name is null
+            avatar_url: githubProfile.avatar_url,
+            email: githubProfile.email ?? undefined,
+            bio: githubProfile.bio,
+        };
+
+        const eventRouter = getEventRouter(c.env);
+        await eventRouter.emitUpdate({
+            userId,
+            payload: buildUpdateAccountUpdate(
+                userId,
+                {
+                    github: protocolProfile,
+                },
+                newSeq,
+                createId()
+            ),
+        });
+
+        // Step 7: Redirect to app with success
         const successUrl = `${APP_URL}?github=connected&user=${encodeURIComponent(githubProfile.login)}`;
         return c.redirect(successUrl, 302);
     } catch (error) {
