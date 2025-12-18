@@ -29,6 +29,52 @@ import {
 } from '@/schemas/connect';
 
 /**
+ * GitHub user profile from API
+ * @see https://docs.github.com/en/rest/users/users#get-the-authenticated-user
+ */
+interface GitHubProfile {
+    id: number;
+    login: string;
+    type: string;
+    site_admin: boolean;
+    avatar_url: string;
+    gravatar_id: string | null;
+    name: string | null;
+    company: string | null;
+    blog: string | null;
+    location: string | null;
+    email: string | null;
+    hireable: boolean | null;
+    bio: string | null;
+    twitter_username: string | null;
+    public_repos: number;
+    public_gists: number;
+    followers: number;
+    following: number;
+    created_at: string;
+    updated_at: string;
+}
+
+/**
+ * Separates a full name into first and last name parts.
+ * Returns empty strings if name is null/undefined.
+ */
+function separateName(name: string | null): { firstName: string; lastName: string } {
+    if (!name) {
+        return { firstName: '', lastName: '' };
+    }
+    const trimmed = name.trim();
+    const spaceIndex = trimmed.indexOf(' ');
+    if (spaceIndex === -1) {
+        return { firstName: trimmed, lastName: '' };
+    }
+    return {
+        firstName: trimmed.substring(0, spaceIndex),
+        lastName: trimmed.substring(spaceIndex + 1),
+    };
+}
+
+/**
  * Environment bindings for connect routes
  */
 interface Env {
@@ -149,17 +195,186 @@ const githubOAuthCallbackRoute = createRoute({
     description: 'Handles GitHub OAuth redirect, exchanges code for token, and stores user data.',
 });
 
+/**
+ * GitHub OAuth Callback Handler
+ *
+ * Flow:
+ * 1. Validate state token (CSRF protection) - extracts userId
+ * 2. Exchange authorization code for access token via GitHub API
+ * 3. Fetch GitHub user profile using the access token
+ * 4. Store/update GitHubUser record and link to Account
+ * 5. Redirect to app with success or error status
+ */
 connectRoutes.openapi(githubOAuthCallbackRoute, async (c) => {
-    // Query params available via c.req.valid('query') when implementing OAuth flow
-    // TODO: Implement full OAuth flow
-    // 1. Verify state token
-    // 2. Exchange code for access token
-    // 3. Fetch user profile
-    // 4. Store in database
-    // 5. Redirect to app
+    const { code, state } = c.req.valid('query');
+    const APP_URL = 'https://app.happy.engineering';
 
-    // Placeholder: redirect to app with error
-    return c.redirect('https://app.happy.engineering?error=not_implemented', 302);
+    // Step 1: Validate state token and extract userId
+    // State format: state_{userId}_{timestamp}
+    const stateMatch = state.match(/^state_([^_]+)_(\d+)$/);
+    if (!stateMatch || !stateMatch[1] || !stateMatch[2]) {
+        console.error('[github-oauth] Invalid state token format:', state);
+        return c.redirect(`${APP_URL}?error=invalid_state`, 302);
+    }
+
+    const userId: string = stateMatch[1];
+    const stateTimestamp = parseInt(stateMatch[2], 10);
+
+    // Verify state is not expired (5 minute TTL)
+    const STATE_TTL_MS = 5 * 60 * 1000;
+    if (Date.now() - stateTimestamp > STATE_TTL_MS) {
+        console.error('[github-oauth] State token expired');
+        return c.redirect(`${APP_URL}?error=state_expired`, 302);
+    }
+
+    // Step 2: Verify environment configuration
+    const clientId = c.env.GITHUB_CLIENT_ID;
+    const clientSecret = c.env.GITHUB_CLIENT_SECRET;
+
+    if (!clientId || !clientSecret) {
+        console.error('[github-oauth] GitHub OAuth not configured');
+        return c.redirect(`${APP_URL}?error=server_config`, 302);
+    }
+
+    try {
+        // Step 3: Exchange code for access token
+        const tokenResponse = await fetch('https://github.com/login/oauth/access_token', {
+            method: 'POST',
+            headers: {
+                Accept: 'application/json',
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                client_id: clientId,
+                client_secret: clientSecret,
+                code: code,
+            }),
+        });
+
+        const tokenData = (await tokenResponse.json()) as {
+            access_token?: string;
+            error?: string;
+            error_description?: string;
+        };
+
+        if (tokenData.error) {
+            console.error('[github-oauth] Token exchange error:', tokenData.error);
+            return c.redirect(
+                `${APP_URL}?error=${encodeURIComponent(tokenData.error)}`,
+                302
+            );
+        }
+
+        const accessToken = tokenData.access_token;
+        if (!accessToken) {
+            console.error('[github-oauth] No access token in response');
+            return c.redirect(`${APP_URL}?error=no_access_token`, 302);
+        }
+
+        // Step 4: Fetch GitHub user profile
+        const userResponse = await fetch('https://api.github.com/user', {
+            headers: {
+                Authorization: `Bearer ${accessToken}`,
+                Accept: 'application/vnd.github.v3+json',
+                'User-Agent': 'Happy-Server-Workers/1.0',
+            },
+        });
+
+        if (!userResponse.ok) {
+            console.error('[github-oauth] Failed to fetch GitHub user:', userResponse.status);
+            return c.redirect(`${APP_URL}?error=github_user_fetch_failed`, 302);
+        }
+
+        const githubProfile = (await userResponse.json()) as GitHubProfile;
+        const githubUserId = githubProfile.id.toString();
+
+        // Step 5: Store in database
+        const db = getDb(c.env.DB);
+
+        // Initialize encryption for storing the access token
+        if (!isEncryptionInitialized()) {
+            await initEncryption(c.env.HANDY_MASTER_SECRET);
+        }
+
+        // Encrypt the access token for storage
+        const encryptedToken = await encryptString(
+            ['user', userId, 'github', 'token'],
+            accessToken
+        );
+
+        // Check if user account exists
+        const existingAccount = await db.query.accounts.findFirst({
+            where: (accounts, { eq }) => eq(accounts.id, userId),
+        });
+
+        if (!existingAccount) {
+            console.error('[github-oauth] User account not found:', userId);
+            return c.redirect(`${APP_URL}?error=user_not_found`, 302);
+        }
+
+        // Check if this GitHub account is connected to another user
+        const existingGithubConnection = await db.query.accounts.findFirst({
+            where: (accounts, { eq, and, ne }) =>
+                and(eq(accounts.githubUserId, githubUserId), ne(accounts.id, userId)),
+        });
+
+        // If connected to another user, disconnect from that user first
+        if (existingGithubConnection) {
+            await db
+                .update(schema.accounts)
+                .set({
+                    githubUserId: null,
+                    updatedAt: new Date(),
+                })
+                .where(eq(schema.accounts.id, existingGithubConnection.id));
+        }
+
+        // Upsert GitHubUser record
+        const existingGithubUser = await db.query.githubUsers.findFirst({
+            where: (users, { eq }) => eq(users.id, githubUserId),
+        });
+
+        if (existingGithubUser) {
+            // Update existing GitHub user
+            await db
+                .update(schema.githubUsers)
+                .set({
+                    profile: githubProfile,
+                    token: Buffer.from(encryptedToken),
+                    updatedAt: new Date(),
+                })
+                .where(eq(schema.githubUsers.id, githubUserId));
+        } else {
+            // Create new GitHub user
+            await db.insert(schema.githubUsers).values({
+                id: githubUserId,
+                profile: githubProfile,
+                token: Buffer.from(encryptedToken),
+            });
+        }
+
+        // Extract name parts from GitHub profile
+        const nameParts = separateName(githubProfile.name);
+
+        // Link GitHub account to user and update profile
+        await db
+            .update(schema.accounts)
+            .set({
+                githubUserId: githubUserId,
+                username: githubProfile.login,
+                firstName: nameParts.firstName,
+                lastName: nameParts.lastName,
+                updatedAt: new Date(),
+            })
+            .where(eq(schema.accounts.id, userId));
+
+        // Step 6: Redirect to app with success
+        const successUrl = `${APP_URL}?github=connected&user=${encodeURIComponent(githubProfile.login)}`;
+        return c.redirect(successUrl, 302);
+    } catch (error) {
+        console.error('[github-oauth] Error in OAuth callback:', error);
+        return c.redirect(`${APP_URL}?error=server_error`, 302);
+    }
 });
 
 /**
