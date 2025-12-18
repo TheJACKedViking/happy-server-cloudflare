@@ -1,5 +1,15 @@
 import { describe, it, expect, vi } from "vitest";
-import { RelationshipStatus } from "@prisma/client";
+
+// Local enum definition matching Prisma's RelationshipStatus for test isolation.
+// This avoids dependency on Prisma client generation which can fail due to
+// environment-specific issues (e.g., /tmp permission restrictions).
+enum RelationshipStatus {
+    none = "none",
+    requested = "requested",
+    pending = "pending",
+    friend = "friend",
+    rejected = "rejected"
+}
 
 // Mock the dependencies that require environment variables
 vi.mock("@/storage/files", () => ({
