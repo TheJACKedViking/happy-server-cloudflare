@@ -324,7 +324,53 @@ describe('Connect Routes with Drizzle Mocking', () => {
     });
 
     describe('POST /v1/connect/github/webhook - GitHub Webhook', () => {
-        it('should accept webhook with required headers', async () => {
+        // Helper to compute HMAC-SHA256 signature for webhook payload
+        async function computeWebhookSignature(payload: string, secret: string): Promise<string> {
+            const encoder = new TextEncoder();
+            const key = await crypto.subtle.importKey(
+                'raw',
+                encoder.encode(secret),
+                { name: 'HMAC', hash: 'SHA-256' },
+                false,
+                ['sign']
+            );
+            const signatureBuffer = await crypto.subtle.sign('HMAC', key, encoder.encode(payload));
+            const signature = Array.from(new Uint8Array(signatureBuffer))
+                .map((b) => b.toString(16).padStart(2, '0'))
+                .join('');
+            return `sha256=${signature}`;
+        }
+
+        const WEBHOOK_SECRET = 'test-webhook-secret-for-tests';
+
+        // Create env with webhook secret configured
+        function webhookEnv() {
+            return createTestEnv({ GITHUB_WEBHOOK_SECRET: WEBHOOK_SECRET });
+        }
+
+        it('should accept webhook with valid signature', async () => {
+            const payload = JSON.stringify({
+                action: 'push',
+                repository: { full_name: 'test/repo' },
+            });
+            const signature = await computeWebhookSignature(payload, WEBHOOK_SECRET);
+
+            const res = await app.request('/v1/connect/github/webhook', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Hub-Signature-256': signature,
+                    'X-GitHub-Event': 'push',
+                },
+                body: payload,
+            }, webhookEnv());
+
+            expect(res.status).toBe(200);
+            const body = await res.json() as { event: string; message: string };
+            expect(body.event).toBe('push');
+        });
+
+        it('should return 500 when webhook secret not configured', async () => {
             const res = await unauthRequest('/v1/connect/github/webhook', {
                 method: 'POST',
                 headers: {
@@ -332,20 +378,15 @@ describe('Connect Routes with Drizzle Mocking', () => {
                     'X-Hub-Signature-256': 'sha256=test-signature',
                     'X-GitHub-Event': 'push',
                 },
-                body: JSON.stringify({
-                    action: 'push',
-                    repository: { full_name: 'test/repo' },
-                }),
+                body: JSON.stringify({ action: 'push' }),
             });
 
-            // Currently accepts all webhooks (signature verification not implemented)
-            expect(res.status).toBe(200);
-            const body = await res.json() as { received: boolean };
-            expect(body.received).toBe(true);
+            // Without GITHUB_WEBHOOK_SECRET configured, returns 500
+            expect(res.status).toBe(500);
         });
 
         it('should require x-hub-signature-256 header', async () => {
-            const res = await unauthRequest('/v1/connect/github/webhook', {
+            const res = await app.request('/v1/connect/github/webhook', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -353,56 +394,80 @@ describe('Connect Routes with Drizzle Mocking', () => {
                     // Missing X-Hub-Signature-256
                 },
                 body: JSON.stringify({ action: 'push' }),
-            });
+            }, webhookEnv());
 
-            // Validation should fail without signature header
+            // Schema validation fails first with 400, then auth check would be 401
             expect(res.status).toBe(400);
         });
 
-        it('should require x-github-event header', async () => {
-            const res = await unauthRequest('/v1/connect/github/webhook', {
+        it('should reject invalid signature', async () => {
+            const res = await app.request('/v1/connect/github/webhook', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-Hub-Signature-256': 'sha256=test-signature',
-                    // Missing X-GitHub-Event
+                    'X-Hub-Signature-256': 'sha256=invalid-signature',
+                    'X-GitHub-Event': 'push',
                 },
                 body: JSON.stringify({ action: 'push' }),
-            });
+            }, webhookEnv());
+
+            // Invalid signature should be rejected
+            expect(res.status).toBe(401);
+        });
+
+        it('should require x-github-event header', async () => {
+            const payload = JSON.stringify({ action: 'push' });
+            const signature = await computeWebhookSignature(payload, WEBHOOK_SECRET);
+
+            const res = await app.request('/v1/connect/github/webhook', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Hub-Signature-256': signature,
+                    // Missing X-GitHub-Event
+                },
+                body: payload,
+            }, webhookEnv());
 
             // Validation should fail without event header
             expect(res.status).toBe(400);
         });
 
         it('should handle different event types', async () => {
-            const events = ['push', 'pull_request', 'issues', 'release'];
+            const events = ['push', 'pull_request', 'issues', 'ping'];
 
             for (const event of events) {
-                const res = await unauthRequest('/v1/connect/github/webhook', {
+                const payload = JSON.stringify({ action: event });
+                const signature = await computeWebhookSignature(payload, WEBHOOK_SECRET);
+
+                const res = await app.request('/v1/connect/github/webhook', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                        'X-Hub-Signature-256': 'sha256=test-signature',
+                        'X-Hub-Signature-256': signature,
                         'X-GitHub-Event': event,
                     },
-                    body: JSON.stringify({ action: event }),
-                });
+                    body: payload,
+                }, webhookEnv());
 
                 expect(res.status).toBe(200);
             }
         });
 
         it('should accept optional x-github-delivery header', async () => {
-            const res = await unauthRequest('/v1/connect/github/webhook', {
+            const payload = JSON.stringify({ action: 'push' });
+            const signature = await computeWebhookSignature(payload, WEBHOOK_SECRET);
+
+            const res = await app.request('/v1/connect/github/webhook', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-Hub-Signature-256': 'sha256=test-signature',
+                    'X-Hub-Signature-256': signature,
                     'X-GitHub-Event': 'push',
                     'X-GitHub-Delivery': 'delivery-id-123',
                 },
-                body: JSON.stringify({ action: 'push' }),
-            });
+                body: payload,
+            }, webhookEnv());
 
             expect(res.status).toBe(200);
         });
@@ -414,16 +479,72 @@ describe('Connect Routes with Drizzle Mocking', () => {
             expect(res.status).toBe(401);
         });
 
-        it('should return success for authenticated user', async () => {
+        it('should return 404 when no GitHub account is connected', async () => {
+            // Mock: account exists but has no githubUserId
+            drizzleMock.mockDb.query.accounts.findFirst = vi.fn().mockResolvedValue({
+                id: TEST_USER_ID,
+                githubUserId: null,
+                seq: 0,
+            });
+
             const res = await authRequest('/v1/connect/github', { method: 'DELETE' });
 
-            // Currently returns success as a placeholder
+            expect(res.status).toBe(404);
+            const body = await res.json() as { error: string };
+            expect(body.error).toBe('GitHub account not connected');
+        });
+
+        it('should return success when GitHub account is connected', async () => {
+            // Mock: account exists with connected GitHub account
+            const githubUserId = generateTestId('github');
+            drizzleMock.mockDb.query.accounts.findFirst = vi.fn().mockResolvedValue({
+                id: TEST_USER_ID,
+                githubUserId,
+                seq: 5,
+            });
+            // Mock the update operation - cast to mock type to access mockReturnValue
+            (drizzleMock.mockDb.update as ReturnType<typeof vi.fn>).mockReturnValue({
+                set: vi.fn().mockReturnThis(),
+                where: vi.fn().mockResolvedValue(undefined),
+            });
+            // Mock the delete operation
+            (drizzleMock.mockDb.delete as ReturnType<typeof vi.fn>).mockReturnValue({
+                where: vi.fn().mockResolvedValue(undefined),
+            });
+
+            const res = await authRequest('/v1/connect/github', { method: 'DELETE' });
+
             expect(res.status).toBe(200);
             const body = await res.json() as { success: boolean };
             expect(body.success).toBe(true);
         });
 
-        it('should work for different authenticated users', async () => {
+        it('should work for different authenticated users with connected accounts', async () => {
+            // Mock: both users have connected GitHub accounts
+            const githubUserId1 = generateTestId('github1');
+            const githubUserId2 = generateTestId('github2');
+
+            // Mock for first user
+            drizzleMock.mockDb.query.accounts.findFirst = vi.fn()
+                .mockResolvedValueOnce({
+                    id: TEST_USER_ID,
+                    githubUserId: githubUserId1,
+                    seq: 1,
+                })
+                .mockResolvedValueOnce({
+                    id: TEST_USER_ID_2,
+                    githubUserId: githubUserId2,
+                    seq: 2,
+                });
+            // Cast to mock type to access mockReturnValue
+            (drizzleMock.mockDb.update as ReturnType<typeof vi.fn>).mockReturnValue({
+                set: vi.fn().mockReturnThis(),
+                where: vi.fn().mockResolvedValue(undefined),
+            });
+            (drizzleMock.mockDb.delete as ReturnType<typeof vi.fn>).mockReturnValue({
+                where: vi.fn().mockResolvedValue(undefined),
+            });
+
             const res1 = await authRequest('/v1/connect/github', { method: 'DELETE' }, 'valid-token');
             expect(res1.status).toBe(200);
 
