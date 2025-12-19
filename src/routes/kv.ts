@@ -4,8 +4,7 @@ import { authMiddleware, type AuthVariables } from '@/middleware/auth';
 import { getDb } from '@/db/client';
 import { schema } from '@/db/schema';
 import { createId } from '@/utils/id';
-// TODO: HAP-264 - Replace with jose-based implementation
-// privacy-kit fails in Workers due to createRequire(import.meta.url)
+// Encoding utilities for base64/hex operations (Workers-compatible)
 import * as privacyKit from '@/lib/privacy-kit-shim';
 import { eq, and, like } from 'drizzle-orm';
 import {

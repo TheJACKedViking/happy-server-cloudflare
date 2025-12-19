@@ -112,9 +112,33 @@ export function createMockDb() {
 }
 
 /**
+ * R2 head response type for mock
+ */
+export interface MockR2HeadResponse {
+    key: string;
+    size: number;
+    httpMetadata?: { contentType?: string };
+    customMetadata?: Record<string, string>;
+    httpEtag: string;
+    uploaded: Date;
+}
+
+/**
+ * Mock R2 Bucket type for tests
+ */
+export interface MockR2Bucket {
+    get: ReturnType<typeof vi.fn>;
+    put: ReturnType<typeof vi.fn>;
+    delete: ReturnType<typeof vi.fn>;
+    list: ReturnType<typeof vi.fn>;
+    head: ReturnType<typeof vi.fn>;
+    _files: Map<string, { body: ArrayBuffer; customMetadata?: Record<string, string> }>;
+}
+
+/**
  * Mock R2 Bucket for tests
  */
-export function createMockR2() {
+export function createMockR2(): MockR2Bucket {
     const files = new Map<string, { body: ArrayBuffer; customMetadata?: Record<string, string> }>();
 
     return {
@@ -162,6 +186,18 @@ export function createMockR2() {
             })),
             truncated: false,
         })),
+        head: vi.fn(async (key: string): Promise<MockR2HeadResponse | null> => {
+            const file = files.get(key);
+            if (!file) return null;
+            return {
+                key,
+                size: file.body.byteLength,
+                httpMetadata: {},
+                customMetadata: file.customMetadata,
+                httpEtag: 'mock-etag',
+                uploaded: new Date(),
+            };
+        }),
 
         // Test helpers
         _files: files,

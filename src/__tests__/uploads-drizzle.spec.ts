@@ -17,6 +17,7 @@ import {
     TEST_USER_ID,
     TEST_USER_ID_2,
     generateTestId,
+    type MockR2HeadResponse,
 } from './test-utils';
 
 // Store the mock instance for test access
@@ -681,7 +682,7 @@ describe('Upload Routes with Drizzle Mocking', () => {
             });
 
             // Mock r2.head to return proper metadata
-            (r2Mock as any).head = vi.fn().mockResolvedValue({
+            r2Mock.head = vi.fn().mockResolvedValue({
                 key: testPath,
                 size: 1024,
                 httpMetadata: { contentType: 'application/pdf' },
@@ -692,7 +693,7 @@ describe('Upload Routes with Drizzle Mocking', () => {
                 },
                 httpEtag: 'test-etag',
                 uploaded: new Date(),
-            });
+            } satisfies MockR2HeadResponse);
 
             const body = await expectOk<{ file: { id: string; path: string }; url: string }>(
                 await authRequest('/v1/uploads/my-file', { method: 'GET' })
@@ -712,7 +713,7 @@ describe('Upload Routes with Drizzle Mocking', () => {
             drizzleMock.seedData('uploadedFiles', [myFile]);
 
             // Mock r2.head to return null (no metadata)
-            (r2Mock as any).head = vi.fn().mockResolvedValue(null);
+            r2Mock.head = vi.fn().mockResolvedValue(null);
 
             const body = await expectOk<{ file: { contentType: string; size: number } }>(
                 await authRequest('/v1/uploads/my-file', { method: 'GET' })
@@ -730,7 +731,7 @@ describe('Upload Routes with Drizzle Mocking', () => {
             });
             drizzleMock.seedData('uploadedFiles', [myFile]);
 
-            (r2Mock as any).head = vi.fn().mockResolvedValue(null);
+            r2Mock.head = vi.fn().mockResolvedValue(null);
 
             const body = await expectOk<{ file: { originalName: string } }>(
                 await authRequest('/v1/uploads/my-file', { method: 'GET' })
@@ -750,7 +751,7 @@ describe('Upload Routes with Drizzle Mocking', () => {
             });
             drizzleMock.seedData('uploadedFiles', [myFile]);
 
-            (r2Mock as any).head = vi.fn().mockResolvedValue({
+            r2Mock.head = vi.fn().mockResolvedValue({
                 key: testPath,
                 size: 2048,
                 httpMetadata: { contentType: 'image/jpeg' },
@@ -760,7 +761,7 @@ describe('Upload Routes with Drizzle Mocking', () => {
                 },
                 httpEtag: 'test-etag',
                 uploaded: new Date(),
-            });
+            } satisfies MockR2HeadResponse);
 
             const body = await expectOk<{
                 file: { width?: number; height?: number; thumbhash?: string };
@@ -1229,7 +1230,7 @@ describe('Upload Routes with Drizzle Mocking', () => {
             });
             drizzleMock.seedData('uploadedFiles', [myFile]);
 
-            (r2Mock as any).head = vi.fn().mockResolvedValue(null);
+            r2Mock.head = vi.fn().mockResolvedValue(null);
 
             const body = await expectOk<{ file: { originalName: string } }>(
                 await authRequest('/v1/uploads/edge-file', { method: 'GET' })
@@ -1249,14 +1250,14 @@ describe('Upload Routes with Drizzle Mocking', () => {
             drizzleMock.seedData('uploadedFiles', [myFile]);
 
             // Return R2 metadata without originalName
-            (r2Mock as any).head = vi.fn().mockResolvedValue({
+            r2Mock.head = vi.fn().mockResolvedValue({
                 key: testPath,
                 size: 0,
                 httpMetadata: {},
                 customMetadata: {}, // No originalName
                 httpEtag: 'test-etag',
                 uploaded: new Date(),
-            });
+            } satisfies MockR2HeadResponse);
 
             const body = await expectOk<{ file: { originalName: string } }>(
                 await authRequest('/v1/uploads/empty-path-file', { method: 'GET' })
@@ -1309,14 +1310,14 @@ describe('Upload Routes with Drizzle Mocking', () => {
             });
             drizzleMock.seedData('uploadedFiles', [myFile]);
 
-            (r2Mock as any).head = vi.fn().mockResolvedValue({
+            r2Mock.head = vi.fn().mockResolvedValue({
                 key: testPath,
                 size: 1024,
                 httpMetadata: { contentType: 'application/pdf' },
                 customMetadata: {},
                 httpEtag: 'test-etag',
                 uploaded: new Date(),
-            });
+            } satisfies MockR2HeadResponse);
 
             const body = await expectOk<{ file: { path: string } }>(
                 await authRequest('/v1/uploads/special-chars-file', { method: 'GET' })
