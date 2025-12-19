@@ -189,23 +189,68 @@ app.get('/health', (c) => {
  *
  * @remarks
  * Indicates whether the service is ready to accept traffic.
- * Different from /health - this checks actual dependencies (D1, R2).
+ * Different from /health - this checks actual dependencies.
+ *
+ * Checks performed (HAP-412, HAP-416):
+ * - database: D1 database connectivity
+ * - storage: R2 bucket accessibility
+ * - durableObjects: ConnectionManager DO instantiation
+ * - kv: Rate limit KV namespace (conditional, omitted if not configured)
+ *
+ * All checks run in parallel for optimal latency.
  * Returns 200 when all checks pass, 503 when any check fails.
  */
 app.get('/ready', async (c) => {
-    // Run health checks in parallel using Promise.allSettled
-    // This reduces latency by ~30-50% compared to sequential execution
-    const [dbResult, r2Result] = await Promise.allSettled([
-        c.env.DB.prepare('SELECT 1').first(),
-        c.env.UPLOADS.list({ limit: 1 }),
-    ]);
-
-    const checks = {
-        database: dbResult.status === 'fulfilled',
-        storage: r2Result.status === 'fulfilled',
+    // Durable Object health check (HAP-416)
+    // Instantiate a dedicated health-check DO instance and call its /health endpoint
+    // This verifies the DO namespace is functional without affecting real connections
+    const doHealthCheck = async (): Promise<boolean> => {
+        const doId = c.env.CONNECTION_MANAGER.idFromName('health-check');
+        const stub = c.env.CONNECTION_MANAGER.get(doId);
+        const response = await stub.fetch(new Request('http://internal/health'));
+        return response.ok;
     };
 
-    const isReady = Object.values(checks).every(Boolean);
+    // KV health check (HAP-416) - conditional on KV being configured
+    // Returns null if KV not configured (allows graceful degradation)
+    const kvHealthCheck = async (): Promise<boolean | null> => {
+        if (!c.env.RATE_LIMIT_KV) {
+            return null; // KV not configured, skip check
+        }
+        // KV.get returns null for non-existent keys without throwing
+        await c.env.RATE_LIMIT_KV.get('_health_check');
+        return true;
+    };
+
+    // Run all checks in parallel using Promise.allSettled for fault isolation
+    // Each check is typed explicitly for proper type narrowing
+    const [dbResult, r2Result, doResult, kvResult] = await Promise.allSettled([
+        c.env.DB.prepare('SELECT 1').first(),           // D1 Database check
+        c.env.UPLOADS.list({ limit: 1 }),               // R2 Storage check
+        doHealthCheck(),                                 // Durable Object check
+        kvHealthCheck(),                                 // KV check (may return null)
+    ] as const);
+
+    // Build checks object with all dependency statuses
+    const checks: Record<string, boolean | null> = {
+        database: dbResult.status === 'fulfilled',
+        storage: r2Result.status === 'fulfilled',
+        durableObjects: doResult.status === 'fulfilled' && doResult.value === true,
+    };
+
+    // KV check is null if not configured (graceful degradation)
+    if (kvResult.status === 'fulfilled' && kvResult.value !== null) {
+        checks.kv = kvResult.value === true;
+    } else if (kvResult.status === 'rejected') {
+        checks.kv = false;
+    }
+    // If kvResult.value is null, omit kv from checks (not configured)
+
+    // Service is ready if all configured checks pass
+    // null values (unconfigured dependencies) are excluded from readiness calculation
+    const isReady = Object.values(checks)
+        .filter((v): v is boolean => v !== null)
+        .every(Boolean);
 
     return c.json(
         {
