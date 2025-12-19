@@ -87,9 +87,21 @@ export const GitHubWebhookHeadersSchema = z
  */
 export const GitHubWebhookResponseSchema = z
     .object({
-        received: z.boolean().openapi({
-            description: 'Whether webhook was successfully received',
+        received: z.literal(true).openapi({
+            description: 'Whether webhook was successfully received and verified',
             example: true,
+        }),
+        event: z.string().openapi({
+            description: 'The GitHub event type that was processed',
+            example: 'push',
+        }),
+        processed: z.boolean().openapi({
+            description: 'Whether the event was handled by a specific handler',
+            example: true,
+        }),
+        message: z.string().openapi({
+            description: 'Status message about event processing',
+            example: 'push acknowledged',
         }),
     })
     .openapi('GitHubWebhookResponse');
