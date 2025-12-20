@@ -1,4 +1,5 @@
 import { z } from '@hono/zod-openapi';
+import { GitHubProfileSchema as CanonicalGitHubProfileSchema } from '@happy/protocol';
 
 /**
  * Zod schemas for account management endpoints with OpenAPI metadata
@@ -22,17 +23,14 @@ export const ServiceVendorSchema = z
     .openapi('ServiceVendor');
 
 /**
- * Schema for GitHub profile data
+ * Schema for GitHub profile data with OpenAPI metadata
+ *
+ * Uses the canonical GitHubProfileSchema from @happy/protocol and wraps it
+ * with OpenAPI metadata for API documentation.
+ *
+ * Note: We cast to add openapi() method since @hono/zod-openapi extends Zod
  */
-export const GithubProfileSchema = z
-    .object({
-        id: z.number().optional(),
-        login: z.string().optional(),
-        name: z.string().nullable().optional(),
-        avatar_url: z.string().optional(),
-        email: z.string().nullable().optional(),
-    })
-    .passthrough()
+export const GithubProfileSchema = (CanonicalGitHubProfileSchema as z.ZodTypeAny)
     .openapi('GithubProfile');
 
 /**
