@@ -309,12 +309,16 @@ export function sessionRoutes(app: Fastify) {
         schema: {
             params: z.object({
                 sessionId: z.string()
+            }),
+            querystring: z.object({
+                sinceSeq: z.coerce.number().int().min(0).optional()
             })
         },
         preHandler: app.authenticate
     }, async (request, reply) => {
         const userId = request.userId;
         const { sessionId } = request.params;
+        const { sinceSeq } = request.query;
 
         // Verify session belongs to user
         const session = await db.session.findFirst({
@@ -328,9 +332,15 @@ export function sessionRoutes(app: Fastify) {
             return reply.code(404).send({ error: 'Session not found' });
         }
 
+        // Build query: if sinceSeq provided, only fetch messages with seq > sinceSeq
+        const whereClause: { sessionId: string; seq?: { gt: number } } = { sessionId };
+        if (sinceSeq !== undefined) {
+            whereClause.seq = { gt: sinceSeq };
+        }
+
         const messages = await db.sessionMessage.findMany({
-            where: { sessionId },
-            orderBy: { createdAt: 'desc' },
+            where: whereClause,
+            orderBy: { seq: 'asc' }, // Return in chronological order for cursor-based pagination
             take: 150,
             select: {
                 id: true,
