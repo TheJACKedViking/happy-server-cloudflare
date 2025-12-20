@@ -7,7 +7,7 @@
  * - GET /v2/sessions/active (active sessions)
  * - POST /v1/sessions (create)
  * - GET /v1/sessions/:id (get single)
- * - DELETE /v1/sessions/:id (soft delete)
+ * - DELETE /v1/sessions/:id (hard delete)
  * - POST /v1/sessions/:id/messages (add message)
  *
  * @module __tests__/sessions.spec
@@ -281,7 +281,7 @@ describe('Session Routes', () => {
         });
     });
 
-    describe('DELETE /v1/sessions/:id - Soft Delete Session', () => {
+    describe('DELETE /v1/sessions/:id - Hard Delete Session', () => {
         it('should require authentication', async () => {
             const res = await app.request('/v1/sessions/test-session-id', {
                 method: 'DELETE',
@@ -299,7 +299,7 @@ describe('Session Routes', () => {
             await expectOneOfStatus(res, [404], [500]);
         });
 
-        it('should soft delete session (set active=false)', async () => {
+        it('should permanently delete session and return success', async () => {
             const res = await app.request('/v1/sessions/test-session-to-delete', {
                 method: 'DELETE',
                 headers: authHeader(),
@@ -308,7 +308,7 @@ describe('Session Routes', () => {
             const body = await expectOneOfStatus<{ success: boolean }>(res, [200], [404, 500]);
             if (!body) return;
                 expect(body.success).toBe(true);
-            
+
         });
     });
 

@@ -1391,6 +1391,139 @@ export async function handleUsageReport(
 }
 
 // =============================================================================
+// DELTA SYNC HANDLERS (HAP-441)
+// =============================================================================
+
+/**
+ * Handle delta sync request on reconnection.
+ *
+ * Event: 'request-updates-since'
+ * Data: { sessions: number, machines: number, artifacts: number }
+ *
+ * Returns updates since the given seq numbers to minimize bandwidth
+ * and prevent missed updates during disconnect.
+ *
+ * @see HAP-441 - WebSocket reconnection may miss updates during disconnect window
+ */
+export async function handleRequestUpdatesSince(
+    ctx: HandlerContext,
+    data: { sessions: number; machines: number; artifacts: number }
+): Promise<HandlerResult> {
+    const { sessions: sessionsSeq, machines: machinesSeq, artifacts: artifactsSeq } = data;
+
+    // Validate input
+    if (
+        typeof sessionsSeq !== 'number' ||
+        typeof machinesSeq !== 'number' ||
+        typeof artifactsSeq !== 'number'
+    ) {
+        return { response: { success: false, error: 'Invalid parameters' } };
+    }
+
+    // Collect updates since the given seq numbers
+    const updates: { type: string; data: unknown; seq: number; createdAt: number }[] = [];
+
+    // Query sessions updated since sessionsSeq
+    const sessionUpdates = await ctx.db
+        .select()
+        .from(sessions)
+        .where(
+            and(
+                eq(sessions.accountId, ctx.userId),
+                sql`${sessions.seq} > ${sessionsSeq}`,
+                eq(sessions.active, true)
+            )
+        )
+        .limit(100);
+
+    for (const session of sessionUpdates) {
+        updates.push({
+            type: 'update-session',
+            data: {
+                t: 'update-session',
+                id: session.id,
+                metadata: session.metadata
+                    ? { version: session.metadataVersion, value: session.metadata }
+                    : undefined,
+                agentState: session.agentState
+                    ? { version: session.agentStateVersion, value: session.agentState }
+                    : undefined,
+            },
+            seq: session.seq,
+            createdAt: session.updatedAt.getTime(),
+        });
+    }
+
+    // Query machines updated since machinesSeq
+    const machineUpdates = await ctx.db
+        .select()
+        .from(machines)
+        .where(
+            and(eq(machines.accountId, ctx.userId), sql`${machines.seq} > ${machinesSeq}`)
+        )
+        .limit(50);
+
+    for (const machine of machineUpdates) {
+        updates.push({
+            type: 'update-machine',
+            data: {
+                t: 'update-machine',
+                machineId: machine.id,
+                active: machine.active,
+                activeAt: machine.lastActiveAt?.getTime() ?? machine.updatedAt.getTime(),
+                metadata: machine.metadata
+                    ? { version: machine.metadataVersion, value: machine.metadata }
+                    : undefined,
+                daemonState: machine.daemonState
+                    ? { version: machine.daemonStateVersion, value: machine.daemonState }
+                    : undefined,
+            },
+            seq: machine.seq,
+            createdAt: machine.updatedAt.getTime(),
+        });
+    }
+
+    // Query artifacts updated since artifactsSeq
+    const artifactUpdates = await ctx.db
+        .select()
+        .from(artifacts)
+        .where(
+            and(eq(artifacts.accountId, ctx.userId), sql`${artifacts.seq} > ${artifactsSeq}`)
+        )
+        .limit(100);
+
+    for (const artifact of artifactUpdates) {
+        updates.push({
+            type: 'update-artifact',
+            data: {
+                t: 'update-artifact',
+                artifactId: artifact.id,
+                header: artifact.header
+                    ? { version: artifact.headerVersion, value: artifact.header }
+                    : undefined,
+                body: artifact.body
+                    ? { version: artifact.bodyVersion, value: artifact.body }
+                    : undefined,
+            },
+            seq: artifact.seq,
+            createdAt: artifact.updatedAt.getTime(),
+        });
+    }
+
+    return {
+        response: {
+            success: true,
+            updates,
+            counts: {
+                sessions: sessionUpdates.length,
+                machines: machineUpdates.length,
+                artifacts: artifactUpdates.length,
+            },
+        },
+    };
+}
+
+// =============================================================================
 // HELPER TYPES
 // =============================================================================
 // NOTE: UpdatePayload is now imported from @happy/protocol via ./types

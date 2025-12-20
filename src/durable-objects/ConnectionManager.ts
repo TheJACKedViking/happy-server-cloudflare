@@ -45,6 +45,7 @@ import {
     handleArtifactDelete,
     handleAccessKeyGet,
     handleUsageReport,
+    handleRequestUpdatesSince,
 } from './handlers';
 
 /**
@@ -747,6 +748,20 @@ export class ConnectionManager extends DurableObject<ConnectionManagerEnv> {
                             tokens: { total: number; [key: string]: number };
                             cost: { total: number; [key: string]: number };
                         }
+                    );
+                    await this.processHandlerResult(ws, result, normalized.messageId);
+                }
+                break;
+
+            // =========================================================================
+            // DELTA SYNC HANDLERS (HAP-441)
+            // =========================================================================
+            case 'request-updates-since':
+                // Handle delta sync request on reconnection
+                if (handlerCtx) {
+                    const result = await handleRequestUpdatesSince(
+                        handlerCtx,
+                        normalized.payload as { sessions: number; machines: number; artifacts: number }
                     );
                     await this.processHandlerResult(ws, result, normalized.messageId);
                 }

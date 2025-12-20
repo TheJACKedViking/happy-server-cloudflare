@@ -6,7 +6,8 @@ import { schema } from '@/db/schema';
 import { createId } from '@/utils/id';
 // Encoding utilities for base64/hex operations (Workers-compatible)
 import * as privacyKit from '@/lib/privacy-kit-shim';
-import { eq, desc, lt, gt, and } from 'drizzle-orm';
+import { eq, desc, lt, gt, and, sql } from 'drizzle-orm';
+import { getEventRouter, buildDeleteSessionUpdate } from '@/lib/eventRouter';
 import {
     ListSessionsResponseSchema,
     PaginatedSessionsQuerySchema,
@@ -31,6 +32,7 @@ import {
  */
 interface Env {
     DB: D1Database;
+    CONNECTION_MANAGER?: DurableObjectNamespace;
 }
 
 /**
@@ -42,7 +44,7 @@ interface Env {
  * - GET /v2/sessions/active - List active sessions (last 15 minutes)
  * - POST /v1/sessions - Create session (tag-based deduplication)
  * - GET /v1/sessions/:id - Get single session
- * - DELETE /v1/sessions/:id - Delete session (soft delete, sets active=false)
+ * - DELETE /v1/sessions/:id - Delete session (hard delete, removes from database)
  * - POST /v1/sessions/:id/messages - Create message in session
  * - GET /v1/sessions/:id/messages - List messages in session
  *
@@ -495,7 +497,7 @@ sessionRoutes.openapi(getSessionRoute, async (c) => {
 });
 
 // ============================================================================
-// DELETE /v1/sessions/:id - Delete Session (Soft Delete)
+// DELETE /v1/sessions/:id - Delete Session (Hard Delete)
 // ============================================================================
 
 const deleteSessionRoute = createRoute({
@@ -532,7 +534,7 @@ const deleteSessionRoute = createRoute({
     },
     tags: ['Sessions'],
     summary: 'Delete session',
-    description: 'Soft delete a session (sets active=false). User must own the session.',
+    description: 'Permanently delete a session and all its related data. User must own the session.',
 });
 
 // @ts-expect-error - OpenAPI handler type inference doesn't carry Variables from middleware
@@ -551,14 +553,46 @@ sessionRoutes.openapi(deleteSessionRoute, async (c) => {
         return c.json({ error: 'Session not found' }, 404);
     }
 
-    // Soft delete: set active=false
+    // Hard delete: Remove session and all related data
+    // Order matters due to foreign key constraints
+
+    // 1. Delete all session messages
     await db
-        .update(schema.sessions)
-        .set({
-            active: false,
-            updatedAt: new Date(),
-        })
+        .delete(schema.sessionMessages)
+        .where(eq(schema.sessionMessages.sessionId, id));
+
+    // 2. Delete all usage reports for this session
+    await db
+        .delete(schema.usageReports)
+        .where(eq(schema.usageReports.sessionId, id));
+
+    // 3. Delete all access keys for this session
+    await db
+        .delete(schema.accessKeys)
+        .where(eq(schema.accessKeys.sessionId, id));
+
+    // 4. Delete the session itself
+    await db
+        .delete(schema.sessions)
         .where(eq(schema.sessions.id, id));
+
+    // 5. Allocate sequence number for the update event
+    const [account] = await db
+        .update(schema.accounts)
+        .set({ seq: sql`${schema.accounts.seq} + 1` })
+        .where(eq(schema.accounts.id, userId))
+        .returning({ seq: schema.accounts.seq });
+
+    // 6. Emit delete-session event to connected clients
+    const connectionManager = c.env.CONNECTION_MANAGER;
+    if (connectionManager) {
+        const updateId = createId();
+        const eventRouter = getEventRouter({ CONNECTION_MANAGER: connectionManager });
+        await eventRouter.emitUpdate({
+            userId,
+            payload: buildDeleteSessionUpdate(id, account?.seq ?? 0, updateId),
+        });
+    }
 
     return c.json({ success: true });
 });
