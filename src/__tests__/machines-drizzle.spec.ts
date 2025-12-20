@@ -172,13 +172,13 @@ describe('Machine Routes with Drizzle Mocking', () => {
 
             drizzleMock.seedData('machines', [machine1, machine2]);
 
-            const body = await expectOk<{ machines: { id: string; lastActiveAt: number }[] }>(
+            const body = await expectOk<{ machines: { id: string; activeAt: number }[] }>(
                 await authRequest('/v1/machines', { method: 'GET' })
             );
 
             expect(body.machines).toHaveLength(2);
-            // Verify both machines are returned with lastActiveAt timestamps
-            expect(body.machines.every(m => typeof m.lastActiveAt === 'number')).toBe(true);
+            // Verify both machines are returned with activeAt timestamps
+            expect(body.machines.every(m => typeof m.activeAt === 'number')).toBe(true);
         });
 
         it('should respect limit parameter', async () => {
@@ -352,7 +352,7 @@ describe('Machine Routes with Drizzle Mocking', () => {
                 dataEncryptionKey: string | null;
                 seq: number;
                 active: boolean;
-                lastActiveAt: number;
+                activeAt: number;
                 createdAt: number;
                 updatedAt: number;
             } }>(
@@ -367,7 +367,7 @@ describe('Machine Routes with Drizzle Mocking', () => {
             expect(body.machine.daemonStateVersion).toBe(1);
             expect(body.machine.seq).toBe(0);
             expect(body.machine.active).toBe(true);
-            expect(typeof body.machine.lastActiveAt).toBe('number');
+            expect(typeof body.machine.activeAt).toBe('number');
             expect(typeof body.machine.createdAt).toBe('number');
             expect(typeof body.machine.updatedAt).toBe('number');
         });
@@ -647,7 +647,7 @@ describe('Machine Routes with Drizzle Mocking', () => {
 
             const body = await expectOk<{ machine: {
                 id: string;
-                lastActiveAt: number;
+                activeAt: number;
                 createdAt: number;
                 updatedAt: number;
             } }>(
@@ -662,8 +662,8 @@ describe('Machine Routes with Drizzle Mocking', () => {
 
             const afterCreate = Date.now();
 
-            expect(body.machine.lastActiveAt).toBeGreaterThanOrEqual(beforeCreate);
-            expect(body.machine.lastActiveAt).toBeLessThanOrEqual(afterCreate);
+            expect(body.machine.activeAt).toBeGreaterThanOrEqual(beforeCreate);
+            expect(body.machine.activeAt).toBeLessThanOrEqual(afterCreate);
             expect(body.machine.createdAt).toBeGreaterThanOrEqual(beforeCreate);
             expect(body.machine.createdAt).toBeLessThanOrEqual(afterCreate);
             expect(body.machine.updatedAt).toBeGreaterThanOrEqual(beforeCreate);
@@ -810,7 +810,7 @@ describe('Machine Routes with Drizzle Mocking', () => {
             expect(body.machine.daemonStateVersion).toBe(2);
         });
 
-        it('should always update lastActiveAt on status update', async () => {
+        it('should always update activeAt on status update', async () => {
             const oldDate = new Date(Date.now() - 86400000); // 1 day ago
             const machine = createTestMachine(TEST_USER_ID, {
                 id: 'last-active-update',
@@ -820,7 +820,7 @@ describe('Machine Routes with Drizzle Mocking', () => {
 
             const beforeUpdate = Date.now();
 
-            const body = await expectOk<{ machine: { id: string; lastActiveAt: number } }>(
+            const body = await expectOk<{ machine: { id: string; activeAt: number } }>(
                 await authRequest('/v1/machines/last-active-update/status', {
                     method: 'PUT',
                     body: JSON.stringify({
@@ -831,8 +831,8 @@ describe('Machine Routes with Drizzle Mocking', () => {
 
             const afterUpdate = Date.now();
 
-            expect(body.machine.lastActiveAt).toBeGreaterThanOrEqual(beforeUpdate);
-            expect(body.machine.lastActiveAt).toBeLessThanOrEqual(afterUpdate);
+            expect(body.machine.activeAt).toBeGreaterThanOrEqual(beforeUpdate);
+            expect(body.machine.activeAt).toBeLessThanOrEqual(afterUpdate);
         });
 
         it('should always update updatedAt on status update', async () => {
@@ -975,7 +975,7 @@ describe('Machine Routes with Drizzle Mocking', () => {
                 dataEncryptionKey: string | null;
                 seq: number;
                 active: boolean;
-                lastActiveAt: number;
+                activeAt: number;
                 createdAt: number;
                 updatedAt: number;
             } }>(
@@ -997,7 +997,7 @@ describe('Machine Routes with Drizzle Mocking', () => {
             expect(body.machine).toHaveProperty('dataEncryptionKey');
             expect(body.machine).toHaveProperty('seq');
             expect(body.machine).toHaveProperty('active');
-            expect(body.machine).toHaveProperty('lastActiveAt');
+            expect(body.machine).toHaveProperty('activeAt');
             expect(body.machine).toHaveProperty('createdAt');
             expect(body.machine).toHaveProperty('updatedAt');
         });

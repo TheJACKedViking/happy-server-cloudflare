@@ -52,7 +52,7 @@ export const MachineSchema = z
             description: 'Whether the machine is currently active',
             example: true,
         }),
-        lastActiveAt: z.number().int().openapi({
+        activeAt: z.number().int().openapi({
             description: 'Last active timestamp (Unix milliseconds)',
             example: 1705014000000,
         }),
