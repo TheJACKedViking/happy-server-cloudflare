@@ -85,7 +85,13 @@ export const cors = (): MiddlewareHandler => {
         ],
 
         // Headers that can be exposed to the client
-        exposeHeaders: ['Content-Length', 'X-Request-Id', 'X-RateLimit-Limit'],
+        exposeHeaders: [
+            'Content-Length',
+            'X-Request-Id',
+            'X-RateLimit-Limit',
+            'X-Response-Time',
+            'Server-Timing',
+        ],
 
         // Cache preflight requests for 24 hours
         maxAge: 86400,

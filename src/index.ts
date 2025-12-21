@@ -1,6 +1,7 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
 import { logger } from '@/middleware/logger';
 import { cors } from '@/middleware/cors';
+import { timing, addServerTiming } from '@/middleware/timing';
 import { errorHandler } from '@/middleware/error';
 import { initAuth } from '@/lib/auth';
 import authRoutes from '@/routes/auth';
@@ -90,8 +91,9 @@ const app = new OpenAPIHono<{ Bindings: Env }>();
 
 /*
  * Global Middleware
- * Applied in order: logging → CORS → auth initialization → routes → error handling
+ * Applied in order: timing → logging → CORS → auth initialization → routes → error handling
  */
+app.use('*', timing());
 app.use('*', logger());
 app.use('*', cors());
 
@@ -201,6 +203,20 @@ app.get('/health', (c) => {
  * Returns 200 when all checks pass, 503 when any check fails.
  */
 app.get('/ready', async (c) => {
+    // Helper to wrap async operations with timing measurement
+    const timed = async <T>(
+        name: string,
+        description: string,
+        operation: () => Promise<T>
+    ): Promise<T> => {
+        const start = Date.now();
+        try {
+            return await operation();
+        } finally {
+            addServerTiming(c, name, Date.now() - start, description);
+        }
+    };
+
     // Durable Object health check (HAP-416)
     // Instantiate a dedicated health-check DO instance and call its /health endpoint
     // This verifies the DO namespace is functional without affecting real connections
@@ -223,12 +239,12 @@ app.get('/ready', async (c) => {
     };
 
     // Run all checks in parallel using Promise.allSettled for fault isolation
-    // Each check is typed explicitly for proper type narrowing
+    // Each check is timed and reported via Server-Timing header (HAP-476)
     const [dbResult, r2Result, doResult, kvResult] = await Promise.allSettled([
-        c.env.DB.prepare('SELECT 1').first(),           // D1 Database check
-        c.env.UPLOADS.list({ limit: 1 }),               // R2 Storage check
-        doHealthCheck(),                                 // Durable Object check
-        kvHealthCheck(),                                 // KV check (may return null)
+        timed('db', 'D1 database', () => c.env.DB.prepare('SELECT 1').first()),
+        timed('r2', 'R2 storage', () => c.env.UPLOADS.list({ limit: 1 })),
+        timed('do', 'Durable Objects', doHealthCheck),
+        timed('kv', 'KV namespace', kvHealthCheck),
     ] as const);
 
     // Build checks object with all dependency statuses

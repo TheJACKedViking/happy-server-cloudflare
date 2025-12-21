@@ -185,6 +185,68 @@ Happy Server Workers is designed to run on Cloudflare's global edge network, pro
 | DELETE | 30-80ms | Single object |
 | LIST | 50-150ms | 1000 objects |
 
+## Response Timing Headers (HAP-476)
+
+All API responses include timing headers for performance monitoring and debugging:
+
+### X-Response-Time
+
+Simple header showing total request duration:
+
+```
+X-Response-Time: 42ms
+```
+
+**Usage**: Check this header for quick performance assessment. Widely supported by monitoring tools, reverse proxies, and log aggregators.
+
+### Server-Timing
+
+W3C standard header with detailed breakdown of internal operations:
+
+```
+Server-Timing: total;dur=42.3;desc="Total request time", db;dur=15.2;desc="D1 database", r2;dur=8.1;desc="R2 storage"
+```
+
+**Usage**: Visible in browser DevTools (Network tab → select request → Timing). Provides granular metrics for debugging slow requests.
+
+### Adding Timing Metrics to Routes
+
+Route handlers can add custom timing entries:
+
+```typescript
+import { addServerTiming } from '@/middleware/timing';
+
+app.get('/v1/users/:id', async (c) => {
+    const start = Date.now();
+    const user = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?')
+        .bind(c.req.param('id'))
+        .first();
+    addServerTiming(c, 'db', Date.now() - start, 'User lookup');
+
+    return c.json(user);
+});
+```
+
+### Example: /ready Endpoint Timing
+
+The `/ready` endpoint demonstrates timing all health checks:
+
+```
+Server-Timing: total;dur=45.2;desc="Total request time",
+               db;dur=12.1;desc="D1 database",
+               r2;dur=8.3;desc="R2 storage",
+               do;dur=18.5;desc="Durable Objects",
+               kv;dur=5.2;desc="KV namespace"
+```
+
+### CORS Configuration
+
+Both headers are exposed to browser clients via CORS:
+
+```typescript
+exposeHeaders: ['X-Response-Time', 'Server-Timing', ...]
+```
+
 ## Monitoring & Alerting
 
 ### Key Metrics to Monitor
