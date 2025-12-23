@@ -343,6 +343,52 @@ export const ListSessionMessagesResponseSchema = z
     .openapi('ListSessionMessagesResponse');
 
 // ============================================================================
+// GET /v2/sessions/:id/messages - List Session Messages with Pagination
+// ============================================================================
+
+/**
+ * Schema for paginated session messages query parameters
+ */
+export const PaginatedMessagesQuerySchema = z.object({
+    cursor: z.string().optional().openapi({
+        param: {
+            name: 'cursor',
+            in: 'query',
+        },
+        description: 'Cursor for pagination (format: cursor_v1_{messageId})',
+        example: 'cursor_v1_msg_abc123',
+    }),
+    limit: z
+        .string()
+        .default('50')
+        .transform((v) => parseInt(v, 10))
+        .pipe(z.number().int().min(1).max(200))
+        .openapi({
+            param: {
+                name: 'limit',
+                in: 'query',
+            },
+            description: 'Maximum number of messages to return (1-200, default 50)',
+            example: '50',
+        }),
+});
+
+/**
+ * Schema for paginated session messages response
+ */
+export const PaginatedMessagesResponseSchema = z
+    .object({
+        messages: z.array(SessionMessageSchema).openapi({
+            description: 'Array of messages for current page',
+        }),
+        nextCursor: z.string().nullable().openapi({
+            description: 'Cursor for next page, null if no more results',
+            example: 'cursor_v1_msg_abc123',
+        }),
+    })
+    .openapi('PaginatedMessagesResponse');
+
+// ============================================================================
 // Error Responses
 // ============================================================================
 

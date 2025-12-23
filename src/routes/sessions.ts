@@ -22,6 +22,8 @@ import {
     CreateSessionMessageRequestSchema,
     CreateSessionMessageResponseSchema,
     ListSessionMessagesResponseSchema,
+    PaginatedMessagesQuerySchema,
+    PaginatedMessagesResponseSchema,
     BadRequestErrorSchema,
     NotFoundErrorSchema,
     UnauthorizedErrorSchema,
@@ -46,7 +48,8 @@ interface Env {
  * - GET /v1/sessions/:id - Get single session
  * - DELETE /v1/sessions/:id - Delete session (hard delete, removes from database)
  * - POST /v1/sessions/:id/messages - Create message in session
- * - GET /v1/sessions/:id/messages - List messages in session
+ * - GET /v1/sessions/:id/messages - List messages in session (legacy, no pagination)
+ * - GET /v2/sessions/:id/messages - List messages with cursor-based pagination
  *
  * All routes use OpenAPI schemas for automatic documentation and validation.
  */
@@ -773,6 +776,124 @@ sessionRoutes.openapi(listSessionMessagesRoute, async (c) => {
             createdAt: m.createdAt.getTime(),
             updatedAt: m.updatedAt.getTime(),
         })),
+    });
+});
+
+// ============================================================================
+// GET /v2/sessions/:id/messages - List Session Messages with Pagination
+// ============================================================================
+
+const paginatedMessagesRoute = createRoute({
+    method: 'get',
+    path: '/v2/sessions/:id/messages',
+    request: {
+        params: SessionIdParamSchema,
+        query: PaginatedMessagesQuerySchema,
+    },
+    responses: {
+        200: {
+            content: {
+                'application/json': {
+                    schema: PaginatedMessagesResponseSchema,
+                },
+            },
+            description: 'Paginated list of session messages',
+        },
+        400: {
+            content: {
+                'application/json': {
+                    schema: BadRequestErrorSchema,
+                },
+            },
+            description: 'Invalid cursor format',
+        },
+        404: {
+            content: {
+                'application/json': {
+                    schema: NotFoundErrorSchema,
+                },
+            },
+            description: 'Session not found',
+        },
+        401: {
+            content: {
+                'application/json': {
+                    schema: UnauthorizedErrorSchema,
+                },
+            },
+            description: 'Unauthorized',
+        },
+    },
+    tags: ['Sessions'],
+    summary: 'List session messages with pagination',
+    description: 'Cursor-based pagination for session messages. Always sorted by ID descending (most recent first).',
+});
+
+// @ts-expect-error - OpenAPI handler type inference doesn't carry Variables from middleware
+sessionRoutes.openapi(paginatedMessagesRoute, async (c) => {
+    const userId = (c as unknown as Context<{ Bindings: Env; Variables: AuthVariables }>).get('userId');
+    const { id: sessionId } = c.req.valid('param');
+    const { cursor, limit = 50 } = c.req.valid('query');
+    const db = getDb(c.env.DB);
+
+    // Verify session exists and belongs to user
+    const session = await db.query.sessions.findFirst({
+        where: (sessions, { eq, and }) =>
+            and(eq(sessions.id, sessionId), eq(sessions.accountId, userId)),
+    });
+
+    if (!session) {
+        return c.json({ error: 'Session not found' }, 404);
+    }
+
+    // Decode cursor - simple ID-based cursor
+    let cursorMessageId: string | undefined;
+    if (cursor) {
+        if (cursor.startsWith('cursor_v1_')) {
+            cursorMessageId = cursor.substring(10);
+        } else {
+            return c.json({ error: 'Invalid cursor format' }, 400);
+        }
+    }
+
+    // Build where conditions
+    const conditions = [eq(schema.sessionMessages.sessionId, sessionId)];
+
+    // Add cursor pagination
+    if (cursorMessageId) {
+        conditions.push(lt(schema.sessionMessages.id, cursorMessageId));
+    }
+
+    // Fetch messages with +1 to check for more
+    const messages = await db
+        .select()
+        .from(schema.sessionMessages)
+        .where(and(...conditions))
+        .orderBy(desc(schema.sessionMessages.id))
+        .limit(limit + 1);
+
+    // Check if there are more results
+    const hasNext = messages.length > limit;
+    const resultMessages = hasNext ? messages.slice(0, limit) : messages;
+
+    // Generate next cursor
+    let nextCursor: string | null = null;
+    const lastMessage = resultMessages[resultMessages.length - 1];
+    if (hasNext && lastMessage) {
+        nextCursor = `cursor_v1_${lastMessage.id}`;
+    }
+
+    return c.json({
+        messages: resultMessages.map((m) => ({
+            id: m.id,
+            sessionId: m.sessionId,
+            localId: m.localId,
+            seq: m.seq,
+            content: m.content,
+            createdAt: m.createdAt.getTime(),
+            updatedAt: m.updatedAt.getTime(),
+        })),
+        nextCursor,
     });
 });
 
