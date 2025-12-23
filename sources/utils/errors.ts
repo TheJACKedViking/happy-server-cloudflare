@@ -26,30 +26,9 @@
  * ```
  */
 
-// Re-export AppError and types from shared package
-export { AppError } from '@happy/errors';
-export type { AppErrorOptions, AppErrorJSON } from '@happy/errors';
+// Re-export AppError, ErrorCodes, and types from shared package
+export { AppError, ErrorCodes } from '@happy/errors';
+export type { AppErrorOptions, AppErrorJSON, ErrorCode } from '@happy/errors';
 
-/**
- * Standardized error codes for happy-server.
- * These codes provide programmatic error identification and consistent categorization.
- */
-export const ErrorCodes = {
-    // Validation errors
-    INVALID_INPUT: 'INVALID_INPUT',
-    VALIDATION_FAILED: 'VALIDATION_FAILED',
-
-    // Authentication errors
-    AUTH_FAILED: 'AUTH_FAILED',
-    AUTH_NOT_INITIALIZED: 'AUTH_NOT_INITIALIZED',
-
-    // Internal errors
-    INTERNAL_ERROR: 'INTERNAL_ERROR',
-    INVARIANT_VIOLATION: 'INVARIANT_VIOLATION',
-    CONFIG_ERROR: 'CONFIG_ERROR',
-} as const;
-
-/**
- * Type representing valid error codes from the ErrorCodes constant.
- */
-export type ErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes];
+// ErrorCodes and ErrorCode type are now imported from @happy/errors above.
+// This provides unified error codes across all Happy projects (CLI, App, Server).
