@@ -15,6 +15,13 @@
       "when": 1765131212027,
       "tag": "0001_pink_wolfsbane",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1766566596802,
+      "tag": "0002_breezy_robbie_robertson",
+      "breakpoints": true
     }
   ]
 }

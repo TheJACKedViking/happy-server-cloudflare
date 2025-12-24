@@ -721,6 +721,58 @@ export const userKVStoresRelations = relations(userKVStores, ({ one }) => ({
 }));
 
 // ============================================================================
+// Token Revocation (Distributed Blacklist)
+// ============================================================================
+
+/**
+ * Revoked tokens table for distributed token invalidation.
+ *
+ * Cloudflare Workers run globally distributed - each edge location has its own
+ * instance with its own in-memory cache. This table provides a durable,
+ * globally-consistent blacklist that all Workers can check.
+ *
+ * @see HAP-452 for implementation details
+ */
+export const revokedTokens = sqliteTable(
+    'RevokedToken',
+    {
+        id: text('id').primaryKey(),
+        /** SHA-256 hash of the token (never store actual tokens) */
+        tokenHash: text('tokenHash').notNull(),
+        /** User ID for bulk invalidation (e.g., logout all devices) */
+        userId: text('userId').notNull(),
+        /** Reason for revocation */
+        reason: text('reason').$type<'logout' | 'security' | 'password_change' | 'manual'>(),
+        /** When the token was revoked */
+        revokedAt: integer('revokedAt', { mode: 'timestamp_ms' })
+            .notNull()
+            .default(sql`(unixepoch() * 1000)`),
+        /**
+         * When this blacklist entry can be cleaned up.
+         * Set to revokedAt + 30 days by default.
+         * After this time, the entry can be deleted since the token
+         * would have been rejected anyway due to age.
+         */
+        expiresAt: integer('expiresAt', { mode: 'timestamp_ms' }),
+    },
+    (table) => ({
+        /** Fast lookup by token hash */
+        tokenHashIdx: uniqueIndex('RevokedToken_tokenHash_key').on(table.tokenHash),
+        /** For bulk invalidation queries */
+        userIdIdx: index('RevokedToken_userId_idx').on(table.userId),
+        /** For cleanup of expired entries */
+        expiresAtIdx: index('RevokedToken_expiresAt_idx').on(table.expiresAt),
+    })
+);
+
+export const revokedTokensRelations = relations(revokedTokens, ({ one }) => ({
+    user: one(accounts, {
+        fields: [revokedTokens.userId],
+        references: [accounts.id],
+    }),
+}));
+
+// ============================================================================
 // Schema Exports
 // ============================================================================
 
@@ -767,6 +819,9 @@ export const schema = {
     // KV tables
     userKVStores,
 
+    // Token revocation tables
+    revokedTokens,
+
     // Relations
     accountsRelations,
     terminalAuthRequestsRelations,
@@ -784,4 +839,5 @@ export const schema = {
     userRelationshipsRelations,
     userFeedItemsRelations,
     userKVStoresRelations,
+    revokedTokensRelations,
 };

@@ -2,6 +2,14 @@ import type { MiddlewareHandler } from 'hono';
 import { verifyToken, type TokenExtras } from '@/lib/auth';
 
 /**
+ * Environment bindings that include D1 database
+ * Used for distributed token blacklist check
+ */
+interface AuthEnv {
+    DB: D1Database;
+}
+
+/**
  * Extended context with authenticated user information
  */
 export interface AuthVariables {
@@ -33,12 +41,20 @@ export interface AuthVariables {
  * - Header: `Authorization: Bearer <token>`
  * - The token is a jose JWT (EdDSA/Ed25519) containing user ID
  *
+ * **Distributed Token Invalidation (HAP-452):**
+ * - Checks D1 token blacklist for revoked tokens
+ * - Ensures logout and token revocation work globally across all Workers
+ *
  * **Failure Modes:**
  * - 401 if no Authorization header
  * - 401 if token format is invalid
  * - 401 if token verification fails
+ * - 401 if token is in the distributed blacklist
  */
-export function authMiddleware(): MiddlewareHandler<{ Variables: AuthVariables }> {
+export function authMiddleware(): MiddlewareHandler<{
+    Bindings: AuthEnv;
+    Variables: AuthVariables;
+}> {
     return async (c, next) => {
         // Extract Authorization header
         const authHeader = c.req.header('Authorization');
@@ -61,8 +77,10 @@ export function authMiddleware(): MiddlewareHandler<{ Variables: AuthVariables }
             return c.json({ error: 'Empty token in Authorization header' }, 401);
         }
 
-        // Verify token
-        const verified = await verifyToken(token);
+        // Verify token with distributed blacklist check (HAP-452)
+        // Pass D1 database for global revocation checking if available
+        const db = c.env?.DB;
+        const verified = await verifyToken(token, db);
 
         if (!verified) {
             return c.json({ error: 'Invalid or expired token' }, 401);
@@ -85,6 +103,8 @@ export function authMiddleware(): MiddlewareHandler<{ Variables: AuthVariables }
  * Useful for routes that have optional authentication (e.g., public data
  * with enhanced features for authenticated users).
  *
+ * Also checks the distributed token blacklist (HAP-452).
+ *
  * @returns Hono middleware handler
  *
  * @example
@@ -101,7 +121,10 @@ export function authMiddleware(): MiddlewareHandler<{ Variables: AuthVariables }
  * });
  * ```
  */
-export function optionalAuthMiddleware(): MiddlewareHandler<{ Variables: Partial<AuthVariables> }> {
+export function optionalAuthMiddleware(): MiddlewareHandler<{
+    Bindings: AuthEnv;
+    Variables: Partial<AuthVariables>;
+}> {
     return async (c, next) => {
         const authHeader = c.req.header('Authorization');
 
@@ -110,7 +133,9 @@ export function optionalAuthMiddleware(): MiddlewareHandler<{ Variables: Partial
             if (parts.length === 2 && parts[0] === 'Bearer') {
                 const token = parts[1];
                 if (token) {
-                    const verified = await verifyToken(token);
+                    // Verify token with distributed blacklist check (HAP-452)
+                    const db = c.env?.DB;
+                    const verified = await verifyToken(token, db);
 
                     if (verified) {
                         c.set('userId', verified.userId);

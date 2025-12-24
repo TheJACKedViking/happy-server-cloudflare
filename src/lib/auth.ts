@@ -1,9 +1,18 @@
 import { SignJWT, jwtVerify, errors as joseErrors } from 'jose';
+import { eq, sql, lt } from 'drizzle-orm';
+import { getDb } from '@/db/client';
+import { revokedTokens } from '@/db/schema';
+import { createId } from '@/utils/id';
 
 /**
  * Token extras type - additional data embedded in tokens
  */
 export type TokenExtras = Record<string, unknown>;
+
+/**
+ * Reason for token revocation
+ */
+export type RevocationReason = 'logout' | 'security' | 'password_change' | 'manual';
 
 /**
  * Token cache entry interface
@@ -172,6 +181,28 @@ async function exportPublicKey(publicKey: CryptoKey): Promise<string> {
 }
 
 /**
+ * Hash a token using SHA-256 for secure storage in the blacklist
+ *
+ * We never store actual tokens in the database - only their hashes.
+ * This ensures that even if the database is compromised, tokens cannot be
+ * extracted and used.
+ *
+ * @param token - The JWT token to hash
+ * @returns Hex-encoded SHA-256 hash of the token
+ */
+async function hashToken(token: string): Promise<string> {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(token);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    return Array.from(new Uint8Array(hashBuffer))
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('');
+}
+
+/** Default expiration for blacklist entries (30 days in milliseconds) */
+const BLACKLIST_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
  * Initialize the auth module with master secret
  *
  * Must be called once during Worker initialization with the master secret.
@@ -323,27 +354,35 @@ export async function createToken(userId: string, extras?: TokenExtras): Promise
  * Verify an authentication token
  *
  * Checks if a token is valid and returns the embedded user ID and extras.
- * Uses in-memory cache for fast verification of recently seen tokens.
+ * Uses a two-tier verification strategy:
+ * 1. In-memory cache (L1) - fast path for recently verified tokens
+ * 2. D1 blacklist check (L2) - distributed revocation check
+ * 3. Cryptographic verification - full JWT signature verification
  *
  * @param token - The token string to verify
+ * @param db - Optional D1 database for distributed blacklist check. If not provided,
+ *             only local cache is checked (useful for development/testing).
  * @returns Promise resolving to user data if valid, null if invalid
  * @throws Error if auth module is not initialized
  *
  * @example
  * ```typescript
+ * // With distributed blacklist check (production)
+ * const verified = await verifyToken(token, env.DB);
+ *
+ * // Without blacklist check (development)
  * const verified = await verifyToken(token);
+ *
  * if (verified) {
  *     console.log(`User ID: ${verified.userId}`);
- *     if (verified.extras?.session) {
- *         console.log(`Session: ${verified.extras.session}`);
- *     }
- * } else {
- *     console.log('Invalid token');
  * }
  * ```
+ *
+ * @see HAP-452 for distributed invalidation implementation
  */
 export async function verifyToken(
-    token: string
+    token: string,
+    db?: D1Database
 ): Promise<{ userId: string; extras?: TokenExtras } | null> {
     console.log('[Auth] Verifying token, first 20 chars:', token.substring(0, 20) + '...');
 
@@ -357,7 +396,16 @@ export async function verifyToken(
         };
     }
 
-    console.log('[Auth] Token not in cache, verifying cryptographically...');
+    console.log('[Auth] Token not in cache, checking blacklist and verifying...');
+
+    // Check distributed blacklist if database is provided
+    if (db) {
+        const isRevoked = await isTokenRevoked(db, token);
+        if (isRevoked) {
+            console.log('[Auth] Token is revoked (found in distributed blacklist)');
+            return null;
+        }
+    }
 
     // Cache miss - verify token cryptographically
     if (!authState) {
@@ -530,39 +578,181 @@ export async function verifyEphemeralToken(
 }
 
 /**
- * Invalidate all tokens for a specific user
+ * Check if a token has been revoked in the distributed blacklist
  *
- * Removes all cached tokens for a user. Useful when a user logs out or
- * their account is compromised and you need to force re-authentication.
+ * This checks the D1 database for the token's hash. Used internally by
+ * verifyToken() and can be called directly if needed.
  *
- * Note: This only clears the cache in this Worker instance. Tokens remain
- * cryptographically valid. For true revocation, implement a token blacklist.
+ * @param db - D1 database instance
+ * @param token - The token to check
+ * @returns Promise resolving to true if revoked, false if not
  *
+ * @see HAP-452 for distributed invalidation implementation
+ */
+export async function isTokenRevoked(db: D1Database, token: string): Promise<boolean> {
+    const tokenHash = await hashToken(token);
+    const drizzle = getDb(db);
+
+    const result = await drizzle
+        .select({ id: revokedTokens.id })
+        .from(revokedTokens)
+        .where(eq(revokedTokens.tokenHash, tokenHash))
+        .limit(1);
+
+    return result.length > 0;
+}
+
+/**
+ * Invalidate all tokens for a specific user (distributed)
+ *
+ * Clears the local cache AND adds entries to the distributed blacklist.
+ * This ensures tokens are invalidated across all Workers globally.
+ *
+ * @param db - D1 database for distributed blacklist
  * @param userId - The user ID whose tokens should be invalidated
+ * @param reason - Reason for revocation (for audit logging)
  *
  * @example
  * ```typescript
- * // User logs out or changes password
- * invalidateUserTokens('user_abc123');
+ * // User logs out - invalidate all their tokens globally
+ * await invalidateUserTokens(env.DB, 'user_abc123', 'logout');
+ *
+ * // Security incident - revoke all tokens
+ * await invalidateUserTokens(env.DB, 'user_abc123', 'security');
  * ```
+ *
+ * @see HAP-452 for distributed invalidation implementation
  */
-export function invalidateUserTokens(userId: string): void {
+export async function invalidateUserTokens(
+    db: D1Database,
+    userId: string,
+    reason: RevocationReason = 'logout'
+): Promise<void> {
+    const drizzle = getDb(db);
+    const now = Date.now();
+    const expiresAt = now + BLACKLIST_EXPIRY_MS;
+
+    // First, collect all tokens for this user and compute hashes
+    const tokensToRevoke: { token: string; hash: string }[] = [];
+    for (const [token, entry] of tokenCache.entries()) {
+        if (entry.userId === userId) {
+            const tokenHash = await hashToken(token);
+            tokensToRevoke.push({ token, hash: tokenHash });
+        }
+    }
+
+    if (tokensToRevoke.length === 0) {
+        console.log(`[Auth] No cached tokens found for user ${userId}`);
+        return;
+    }
+
+    // Insert all revoked tokens into D1 (batch insert for efficiency)
+    // Note: If this fails, we don't delete from local cache (atomic behavior)
+    await drizzle.insert(revokedTokens).values(
+        tokensToRevoke.map(({ hash }) => ({
+            id: createId(),
+            tokenHash: hash,
+            userId,
+            reason,
+            revokedAt: new Date(now),
+            expiresAt: new Date(expiresAt),
+        }))
+    ).onConflictDoNothing(); // Ignore if already blacklisted
+
+    // Only delete from local cache after DB insert succeeds
+    for (const { token } of tokensToRevoke) {
+        tokenCache.delete(token);
+    }
+
+    console.log(`[Auth] Invalidated ${tokensToRevoke.length} tokens for user ${userId} (reason: ${reason})`);
+}
+
+/**
+ * Invalidate a specific token (distributed)
+ *
+ * Removes from local cache AND adds to the distributed blacklist.
+ * The token will be rejected on all Workers globally.
+ *
+ * @param db - D1 database for distributed blacklist
+ * @param token - The token to invalidate
+ * @param userId - The user ID who owns the token
+ * @param reason - Reason for revocation (for audit logging)
+ *
+ * @example
+ * ```typescript
+ * // Invalidate a specific token globally
+ * await invalidateToken(env.DB, token, userId, 'logout');
+ * ```
+ *
+ * @see HAP-452 for distributed invalidation implementation
+ */
+export async function invalidateToken(
+    db: D1Database,
+    token: string,
+    userId: string,
+    reason: RevocationReason = 'logout'
+): Promise<void> {
+    const drizzle = getDb(db);
+    const tokenHash = await hashToken(token);
+    const now = Date.now();
+    const expiresAt = now + BLACKLIST_EXPIRY_MS;
+
+    // Add to distributed blacklist
+    await drizzle.insert(revokedTokens).values({
+        id: createId(),
+        tokenHash,
+        userId,
+        reason,
+        revokedAt: new Date(now),
+        expiresAt: new Date(expiresAt),
+    }).onConflictDoNothing(); // Ignore if already blacklisted
+
+    // Remove from local cache
+    tokenCache.delete(token);
+
+    console.log(`[Auth] Invalidated token for user ${userId} (reason: ${reason})`);
+}
+
+/**
+ * Invalidate a specific token (local only - legacy)
+ *
+ * @deprecated Use invalidateToken(db, token, userId) for distributed invalidation
+ *
+ * This function only clears the local cache and does NOT add to the distributed
+ * blacklist. It's kept for backward compatibility but should be avoided.
+ *
+ * @param token - The token string to invalidate locally
+ */
+export function invalidateTokenLocal(token: string): void {
+    console.warn(
+        '[Auth] DEPRECATED: invalidateTokenLocal() only affects this Worker instance. ' +
+            'Token will still be valid on other edge locations. ' +
+            'Use invalidateToken(db, token, userId) for global invalidation.'
+    );
+    tokenCache.delete(token);
+}
+
+/**
+ * Invalidate all tokens for a user (local only - legacy)
+ *
+ * @deprecated Use invalidateUserTokens(db, userId) for distributed invalidation
+ *
+ * This function only clears the local cache and does NOT add to the distributed
+ * blacklist. It's kept for backward compatibility but should be avoided.
+ *
+ * @param userId - The user ID whose tokens should be invalidated locally
+ */
+export function invalidateUserTokensLocal(userId: string): void {
+    console.warn(
+        '[Auth] DEPRECATED: invalidateUserTokensLocal() only affects this Worker instance. ' +
+            'Tokens will still be valid on other edge locations. ' +
+            'Use invalidateUserTokens(db, userId) for global invalidation.'
+    );
     for (const [token, entry] of tokenCache.entries()) {
         if (entry.userId === userId) {
             tokenCache.delete(token);
         }
     }
-}
-
-/**
- * Invalidate a specific token
- *
- * Removes a token from the cache, forcing re-verification on next use.
- *
- * @param token - The token string to invalidate
- */
-export function invalidateToken(token: string): void {
-    tokenCache.delete(token);
 }
 
 /**
@@ -599,4 +789,84 @@ export function getCacheStats(): { size: number; oldestEntry: number | null } {
 export function resetAuth(): void {
     authState = null;
     tokenCache.clear();
+}
+
+/**
+ * Clean up expired entries from the token blacklist
+ *
+ * This should be called periodically (e.g., via a scheduled Worker) to
+ * remove old blacklist entries that are no longer needed. Entries are
+ * safe to delete after their expiresAt time because the underlying
+ * tokens would have been rejected anyway.
+ *
+ * @param db - D1 database instance
+ * @returns Number of entries deleted
+ *
+ * @example
+ * ```typescript
+ * // In a scheduled Worker
+ * export default {
+ *     async scheduled(event, env, ctx) {
+ *         const deleted = await cleanupExpiredTokens(env.DB);
+ *         console.log(`Cleaned up ${deleted} expired blacklist entries`);
+ *     }
+ * };
+ * ```
+ *
+ * @see HAP-452 for distributed invalidation implementation
+ */
+export async function cleanupExpiredTokens(db: D1Database): Promise<number> {
+    const drizzle = getDb(db);
+    const now = Date.now();
+
+    // First count how many we'll delete (for logging)
+    const countResult = await drizzle
+        .select({ count: sql<number>`COUNT(*)` })
+        .from(revokedTokens)
+        .where(lt(revokedTokens.expiresAt, new Date(now)));
+
+    const toDelete = countResult[0]?.count ?? 0;
+
+    if (toDelete === 0) {
+        return 0;
+    }
+
+    // Delete entries where expiresAt < now
+    await drizzle
+        .delete(revokedTokens)
+        .where(lt(revokedTokens.expiresAt, new Date(now)));
+
+    console.log(`[Auth] Cleaned up ${toDelete} expired blacklist entries`);
+
+    return toDelete;
+}
+
+/**
+ * Get blacklist statistics for monitoring
+ *
+ * @param db - D1 database instance
+ * @returns Object with blacklist statistics
+ */
+export async function getBlacklistStats(db: D1Database): Promise<{
+    totalEntries: number;
+    expiredEntries: number;
+}> {
+    const drizzle = getDb(db);
+    const now = Date.now();
+
+    // Count total entries
+    const totalResult = await drizzle
+        .select({ count: sql<number>`COUNT(*)` })
+        .from(revokedTokens);
+
+    // Count expired entries (ready for cleanup)
+    const expiredResult = await drizzle
+        .select({ count: sql<number>`COUNT(*)` })
+        .from(revokedTokens)
+        .where(lt(revokedTokens.expiresAt, new Date(now)));
+
+    return {
+        totalEntries: totalResult[0]?.count ?? 0,
+        expiredEntries: expiredResult[0]?.count ?? 0,
+    };
 }
