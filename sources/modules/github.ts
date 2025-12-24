@@ -7,7 +7,7 @@ import { db } from "@/storage/db";
 let app: App | null = null;
 let webhooks: Webhooks | null = null;
 
-export async function initGithub() {
+export async function initGitHub() {
     if (
         process.env.GITHUB_APP_ID &&
         process.env.GITHUB_PRIVATE_KEY &&

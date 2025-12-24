@@ -11,8 +11,8 @@ interface TokenCacheEntry {
 interface AuthTokens {
     generator: Awaited<ReturnType<typeof privacyKit.createPersistentTokenGenerator>>;
     verifier: Awaited<ReturnType<typeof privacyKit.createPersistentTokenVerifier>>;
-    githubVerifier: Awaited<ReturnType<typeof privacyKit.createEphemeralTokenVerifier>>;
-    githubGenerator: Awaited<ReturnType<typeof privacyKit.createEphemeralTokenGenerator>>;
+    gitHubVerifier: Awaited<ReturnType<typeof privacyKit.createEphemeralTokenVerifier>>;
+    gitHubGenerator: Awaited<ReturnType<typeof privacyKit.createEphemeralTokenGenerator>>;
 }
 
 class AuthModule {
@@ -37,19 +37,19 @@ class AuthModule {
             publicKey: generator.publicKey
         });
         
-        const githubGenerator = await privacyKit.createEphemeralTokenGenerator({
+        const gitHubGenerator = await privacyKit.createEphemeralTokenGenerator({
             service: 'github-happy',
             seed: process.env.HANDY_MASTER_SECRET!,
             ttl: 5 * 60 * 1000 // 5 minutes
         });
 
-        const githubVerifier = await privacyKit.createEphemeralTokenVerifier({
+        const gitHubVerifier = await privacyKit.createEphemeralTokenVerifier({
             service: 'github-happy',
-            publicKey: githubGenerator.publicKey,
+            publicKey: gitHubGenerator.publicKey,
         });
 
 
-        this.tokens = { generator, verifier, githubVerifier, githubGenerator };
+        this.tokens = { generator, verifier, gitHubVerifier, gitHubGenerator };
         
         log({ module: 'auth' }, 'Auth module initialized');
     }
@@ -149,28 +149,28 @@ class AuthModule {
         };
     }
     
-    async createGithubToken(userId: string): Promise<string> {
+    async createGitHubToken(userId: string): Promise<string> {
         if (!this.tokens) {
             throw new AppError(ErrorCodes.AUTH_NOT_INITIALIZED, 'Auth module not initialized');
         }
-        
+
         const payload = { user: userId, purpose: 'github-oauth' };
-        const token = await this.tokens.githubGenerator.new(payload);
-        
+        const token = await this.tokens.gitHubGenerator.new(payload);
+
         return token;
     }
 
-    async verifyGithubToken(token: string): Promise<{ userId: string } | null> {
+    async verifyGitHubToken(token: string): Promise<{ userId: string } | null> {
         if (!this.tokens) {
             throw new AppError(ErrorCodes.AUTH_NOT_INITIALIZED, 'Auth module not initialized');
         }
-        
+
         try {
-            const verified = await this.tokens.githubVerifier.verify(token);
+            const verified = await this.tokens.gitHubVerifier.verify(token);
             if (!verified) {
                 return null;
             }
-            
+
             return { userId: verified.user as string };
         } catch (error) {
             log({ module: 'auth', level: 'error' }, `GitHub token verification failed: ${error}`);

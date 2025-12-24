@@ -20,8 +20,8 @@ vi.mock('@/storage/db', () => ({
 
 vi.mock('@/app/auth/auth', () => ({
     auth: {
-        createGithubToken: vi.fn().mockResolvedValue('mock-github-state-token'),
-        verifyGithubToken: vi.fn(),
+        createGitHubToken: vi.fn().mockResolvedValue('mock-github-state-token'),
+        verifyGitHubToken: vi.fn(),
     },
 }));
 
@@ -139,7 +139,7 @@ describe('connectRoutes', () => {
 
     describe('GET /v1/connect/github/callback', () => {
         it('should redirect to error page when state is invalid', async () => {
-            vi.mocked(auth.verifyGithubToken).mockResolvedValue(null);
+            vi.mocked(auth.verifyGitHubToken).mockResolvedValue(null);
 
             const response = await app.inject({
                 method: 'GET',
@@ -151,7 +151,7 @@ describe('connectRoutes', () => {
         });
 
         it('should redirect to error page when GitHub OAuth is not configured', async () => {
-            vi.mocked(auth.verifyGithubToken).mockResolvedValue({ userId: TEST_USER_ID });
+            vi.mocked(auth.verifyGitHubToken).mockResolvedValue({ userId: TEST_USER_ID });
             const originalClientId = process.env.GITHUB_CLIENT_ID;
             const originalClientSecret = process.env.GITHUB_CLIENT_SECRET;
             delete process.env.GITHUB_CLIENT_ID;

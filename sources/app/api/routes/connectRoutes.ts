@@ -69,7 +69,7 @@ export function connectRoutes(app: Fastify) {
         }
 
         // Generate ephemeral state token (5 minutes TTL)
-        const state = await auth.createGithubToken(request.userId);
+        const state = await auth.createGitHubToken(request.userId);
 
         // Build complete OAuth URL
         const params = new URLSearchParams({
@@ -96,7 +96,7 @@ export function connectRoutes(app: Fastify) {
         const { code, state } = request.query;
 
         // Verify the state token to get userId
-        const tokenData = await auth.verifyGithubToken(state);
+        const tokenData = await auth.verifyGitHubToken(state);
         if (!tokenData) {
             log({ module: 'github-oauth' }, `Invalid state token: ${state}`);
             return reply.redirect('https://app.happy.engineering?error=invalid_state');
