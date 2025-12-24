@@ -104,9 +104,21 @@ export function resetDeprecationWarning(): void {
 }
 
 /**
- * Type guard to validate environment configuration
+ * Type guard to validate environment configuration.
+ * Provides clear, actionable error messages for missing required variables.
+ * Integrated in worker initialization via middleware (HAP-523).
+ *
  * @param env - Environment object to validate
  * @returns True if all required variables are present
+ * @throws Error with detailed setup instructions for missing config
+ *
+ * @example
+ * ```typescript
+ * // In worker fetch handler
+ * if (!validateEnv(env)) {
+ *     return new Response('Configuration error', { status: 500 });
+ * }
+ * ```
  */
 export function validateEnv(env: Partial<Env>): env is Env {
     const secret = getMasterSecret(env);

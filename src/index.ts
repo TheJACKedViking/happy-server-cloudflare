@@ -4,7 +4,7 @@ import { cors } from '@/middleware/cors';
 import { timing, addServerTiming } from '@/middleware/timing';
 import { errorHandler } from '@/middleware/error';
 import { initAuth, cleanupExpiredTokens } from '@/lib/auth';
-import { getMasterSecret } from '@/config/env';
+import { getMasterSecret, validateEnv } from '@/config/env';
 import authRoutes from '@/routes/auth';
 import testRoutes from '@/routes/test/privacy-kit-test';
 import sessionsRoutes from '@/routes/sessions';
@@ -98,11 +98,44 @@ const app = new OpenAPIHono<{ Bindings: Env }>();
 
 /*
  * Global Middleware
- * Applied in order: timing → logging → CORS → auth initialization → routes → error handling
+ * Applied in order: timing → logging → CORS → env validation → auth initialization → routes → error handling
  */
 app.use('*', timing());
 app.use('*', logger());
 app.use('*', cors());
+
+/*
+ * Environment validation middleware (HAP-523)
+ * Validates required configuration before processing any routes.
+ * Returns structured JSON error response with documentation link.
+ * Skip validation for health endpoint (allows monitoring when misconfigured).
+ */
+app.use('*', async (c, next): Promise<Response | void> => {
+    // Allow /health endpoint even without configuration (for basic liveness checks)
+    if (c.req.path === '/health') {
+        await next();
+        return;
+    }
+
+    try {
+        validateEnv(c.env);
+    } catch (error) {
+        const message = error instanceof Error ? error.message : 'Invalid environment configuration';
+        console.error('[Config Error]', message);
+
+        return c.json(
+            {
+                error: 'Configuration Error',
+                message,
+                docs: 'https://github.com/Enflame-Media/happy-server-workers/blob/main/docs/SECRETS.md',
+                timestamp: new Date().toISOString(),
+            },
+            500
+        );
+    }
+
+    await next();
+});
 
 /*
  * Initialize auth module on every request
@@ -200,7 +233,8 @@ app.get('/health', (c) => {
  * Indicates whether the service is ready to accept traffic.
  * Different from /health - this checks actual dependencies.
  *
- * Checks performed (HAP-412, HAP-416):
+ * Checks performed (HAP-412, HAP-416, HAP-523):
+ * - environment: Configuration validation (HAPPY_MASTER_SECRET, DB binding)
  * - database: D1 database connectivity
  * - storage: R2 bucket accessibility
  * - durableObjects: ConnectionManager DO instantiation
@@ -208,8 +242,21 @@ app.get('/health', (c) => {
  *
  * All checks run in parallel for optimal latency.
  * Returns 200 when all checks pass, 503 when any check fails.
+ * When environment validation fails, includes error message and docs link.
  */
 app.get('/ready', async (c) => {
+    // Environment validation check (HAP-523)
+    // Validates configuration before checking dependencies
+    let envValid = true;
+    let envError: string | null = null;
+    try {
+        validateEnv(c.env);
+    } catch (error) {
+        envValid = false;
+        envError = error instanceof Error ? error.message : 'Invalid environment configuration';
+        console.error('[Ready Check] Configuration validation failed:', envError);
+    }
+
     // Helper to wrap async operations with timing measurement
     const timed = async <T>(
         name: string,
@@ -254,8 +301,9 @@ app.get('/ready', async (c) => {
         timed('kv', 'KV namespace', kvHealthCheck),
     ] as const);
 
-    // Build checks object with all dependency statuses
+    // Build checks object with all dependency statuses (HAP-523: added environment check)
     const checks: Record<string, boolean | null> = {
+        environment: envValid,
         database: dbResult.status === 'fulfilled',
         storage: r2Result.status === 'fulfilled',
         durableObjects: doResult.status === 'fulfilled' && doResult.value === true,
@@ -275,14 +323,26 @@ app.get('/ready', async (c) => {
         .filter((v): v is boolean => v !== null)
         .every(Boolean);
 
-    return c.json(
-        {
-            ready: isReady,
-            checks,
-            timestamp: new Date().toISOString(),
-        },
-        isReady ? 200 : 503
-    );
+    // Build response with optional error details (HAP-523)
+    const response: {
+        ready: boolean;
+        checks: Record<string, boolean | null>;
+        timestamp: string;
+        error?: string;
+        docs?: string;
+    } = {
+        ready: isReady,
+        checks,
+        timestamp: new Date().toISOString(),
+    };
+
+    // Include error details if environment validation failed
+    if (!envValid && envError) {
+        response.error = envError;
+        response.docs = 'https://github.com/Enflame-Media/happy-server-workers/blob/main/docs/SECRETS.md';
+    }
+
+    return c.json(response, isReady ? 200 : 503);
 });
 
 /*
