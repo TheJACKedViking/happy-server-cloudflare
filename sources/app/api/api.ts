@@ -22,6 +22,7 @@ import { enableCorrelationId } from "./utils/enableCorrelationId";
 import { userRoutes } from "./routes/userRoutes";
 import { feedRoutes } from "./routes/feedRoutes";
 import { kvRoutes } from "./routes/kvRoutes";
+import { healthRoutes } from "./routes/healthRoutes";
 
 export async function startApi() {
 
@@ -68,6 +69,7 @@ export async function startApi() {
     userRoutes(typed);
     feedRoutes(typed);
     kvRoutes(typed);
+    healthRoutes(typed);
 
     // Start HTTP 
     const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3005;
