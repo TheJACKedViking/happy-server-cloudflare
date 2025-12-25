@@ -11,6 +11,7 @@ import {
     encryptString,
     decryptString,
 } from '@/lib/encryption';
+import { createEphemeralToken, verifyEphemeralToken } from '@/lib/auth';
 import { getEventRouter, buildUpdateAccountUpdate } from '@/lib/eventRouter';
 import { getMasterSecret } from '@/config/env';
 import {
@@ -159,9 +160,9 @@ connectRoutes.openapi(githubOAuthParamsRoute, async (c) => {
         return c.json({ error: 'GitHub OAuth not configured' }, 400);
     }
 
-    // Generate ephemeral state token (placeholder - should use auth.createGitHubToken)
-    // For now, just use a simple implementation
-    const state = `state_${userId}_${Date.now()}`;
+    // Generate cryptographically signed ephemeral state token (5-minute TTL)
+    // Uses Ed25519 JWT with userId embedded - prevents CSRF and state forgery
+    const state = await createEphemeralToken(userId, 'github-oauth-state');
 
     // Build complete OAuth URL
     const params = new URLSearchParams({
@@ -215,23 +216,15 @@ connectRoutes.openapi(githubOAuthCallbackRoute, async (c) => {
     const { code, state } = c.req.valid('query');
     const APP_URL = 'https://app.happy.engineering';
 
-    // Step 1: Validate state token and extract userId
-    // State format: state_{userId}_{timestamp}
-    const stateMatch = state.match(/^state_([^_]+)_(\d+)$/);
-    if (!stateMatch || !stateMatch[1] || !stateMatch[2]) {
-        console.error('[github-oauth] Invalid state token format:', state);
+    // Step 1: Verify cryptographically signed state token and extract userId
+    // Token is Ed25519-signed JWT with 5-minute TTL - prevents CSRF and tampering
+    const verified = await verifyEphemeralToken(state);
+    if (!verified || verified.purpose !== 'github-oauth-state') {
+        console.error('[github-oauth] Invalid or expired state token');
         return c.redirect(`${APP_URL}?error=invalid_state`, 302);
     }
 
-    const userId: string = stateMatch[1];
-    const stateTimestamp = parseInt(stateMatch[2], 10);
-
-    // Verify state is not expired (5 minute TTL)
-    const STATE_TTL_MS = 5 * 60 * 1000;
-    if (Date.now() - stateTimestamp > STATE_TTL_MS) {
-        console.error('[github-oauth] State token expired');
-        return c.redirect(`${APP_URL}?error=state_expired`, 302);
-    }
+    const userId: string = verified.userId;
 
     // Step 2: Verify environment configuration
     const clientId = c.env.GITHUB_CLIENT_ID;
