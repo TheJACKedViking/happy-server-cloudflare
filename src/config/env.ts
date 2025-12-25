@@ -46,6 +46,13 @@ export interface Env {
      * Optional - improves token verification performance
      */
     TOKEN_CACHE?: KVNamespace;
+
+    /**
+     * Analytics Engine dataset for sync metrics (HAP-546)
+     * Used to store sync performance metrics for analysis
+     * @optional - metrics are silently dropped if not configured
+     */
+    SYNC_METRICS?: AnalyticsEngineDataset;
 }
 
 // Track whether deprecation warning has been logged (per Worker instance)

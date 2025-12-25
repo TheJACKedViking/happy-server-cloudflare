@@ -40,6 +40,11 @@ remote = true
 binding = "RATE_LIMIT_KV"
 id = "5d82d033678243aa8080971ecf538477"
 
+# Analytics Engine binding (development) - for sync metrics (HAP-546)
+[[env.dev.analytics_engine_datasets]]
+binding = "SYNC_METRICS"
+dataset = "sync_metrics_dev"
+
 # Durable Objects bindings (development)
 [[env.dev.durable_objects.bindings]]
 name = "CONNECTION_MANAGER"
@@ -96,6 +101,11 @@ remote = true
 [[env.prod.kv_namespaces]]
 binding = "RATE_LIMIT_KV"
 id = "2e9baf9f10054559a6220e78051fb336"
+
+# Analytics Engine binding (production) - for sync metrics (HAP-546)
+[[env.prod.analytics_engine_datasets]]
+binding = "SYNC_METRICS"
+dataset = "sync_metrics_prod"
 
 # Durable Objects bindings (production)
 [[env.prod.durable_objects.bindings]]

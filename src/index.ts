@@ -23,6 +23,7 @@ import pushRoutes from '@/routes/push';
 import websocketRoutes from '@/routes/websocket';
 import uploadRoutes from '@/routes/uploads';
 import usageRoutes from '@/routes/usage';
+import analyticsRoutes from '@/routes/analytics';
 
 // Export Durable Object classes for Cloudflare Workers
 // These must be exported from the main entry point for Wrangler to detect them
@@ -83,6 +84,13 @@ interface Env {
      * @optional - rate limiting gracefully degrades if not configured (HAP-409)
      */
     RATE_LIMIT_KV?: KVNamespace;
+
+    /**
+     * Analytics Engine dataset for sync metrics (HAP-546)
+     * Used to store sync performance metrics for analysis
+     * @optional - metrics are silently dropped if not configured
+     */
+    SYNC_METRICS?: AnalyticsEngineDataset;
 }
 
 /**
@@ -189,6 +197,9 @@ app.route('/', uploadRoutes);
 
 // Mount usage routes (HAP-302: Usage query endpoint)
 app.route('/', usageRoutes);
+
+// Mount analytics routes (HAP-546: Sync metrics ingestion)
+app.route('/', analyticsRoutes);
 
 // Mount test routes
 app.route('/test', testRoutes);
