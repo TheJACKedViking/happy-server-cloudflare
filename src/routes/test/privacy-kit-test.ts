@@ -29,6 +29,11 @@ import {
 
 interface Env {
     /**
+     * Current deployment environment
+     * @default 'production'
+     */
+    ENVIRONMENT?: 'development' | 'staging' | 'production';
+    /**
      * Test secret for token generation
      * Set in .dev.vars for local development
      */
@@ -67,6 +72,7 @@ const testRoutes = new Hono<{ Bindings: Env }>();
  *
  * @route GET /test/privacy-kit
  * @returns Test results showing jose auth compatibility status
+ * @security Only accessible in development environment (returns 404 in production)
  *
  * Tests performed:
  * 1. Auth initialization - jose module loads and initializes
@@ -103,6 +109,12 @@ const testRoutes = new Hono<{ Bindings: Env }>();
  * ```
  */
 testRoutes.get('/privacy-kit', async (c) => {
+    // Only allow in development environment (HAP-508)
+    // Returns 404 in production to avoid exposing test endpoints
+    if (c.env.ENVIRONMENT !== 'development') {
+        return c.json({ error: 'Not found' }, 404);
+    }
+
     const results: TestResults = {
         success: true,
         tests: {},
