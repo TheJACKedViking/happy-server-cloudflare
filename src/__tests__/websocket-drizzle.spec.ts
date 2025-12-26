@@ -226,25 +226,29 @@ describe('WebSocket Routes with Drizzle Mocking', () => {
             expect(mockInitAuth).toHaveBeenCalledWith('test-secret-for-vitest-tests');
         });
 
-        it('should skip initAuth in websocket handler when HAPPY_MASTER_SECRET is falsy', async () => {
+        it('should return 500 error when HAPPY_MASTER_SECRET is falsy (websocket handler)', async () => {
             // Create a fresh mock to track calls
             vi.mocked(mockInitAuth).mockClear();
+            vi.mocked(mockVerifyToken).mockClear();
 
             const envWithoutSecret = createTestEnv({ HAPPY_MASTER_SECRET: '' });
 
-            await app.request('/v1/updates?token=valid-token', {
+            const response = await app.request('/v1/updates?token=valid-token', {
                 method: 'GET',
                 headers: {
                     'Upgrade': 'websocket',
                 },
             }, envWithoutSecret);
 
-            // verifyToken should still be called as the flow continues
-            // verifyToken is called with (token, db)
-            expect(mockVerifyToken).toHaveBeenCalledWith('valid-token', expect.anything());
+            // Middleware validates env BEFORE route handler executes
+            // When HAPPY_MASTER_SECRET is missing, validateEnv throws and middleware returns 500
+            expect(response.status).toBe(500);
+            const body = await response.json();
+            expect(body.error).toBe('Configuration Error');
+            expect(body.message).toContain('HAPPY_MASTER_SECRET');
 
-            // initAuth should not be called with empty string (from this route)
-            // Note: Other middleware may call it, so we check it wasn't called with empty string
+            // Auth functions should NOT be called - middleware blocks before route handler
+            expect(mockVerifyToken).not.toHaveBeenCalled();
             expect(mockInitAuth).not.toHaveBeenCalledWith('');
         });
 
@@ -404,22 +408,27 @@ describe('WebSocket Routes with Drizzle Mocking', () => {
             expect(mockInitAuth).toHaveBeenCalledWith('test-secret-for-vitest-tests');
         });
 
-        it('should skip initAuth in stats handler when HAPPY_MASTER_SECRET is falsy', async () => {
+        it('should return 500 error when HAPPY_MASTER_SECRET is falsy (stats handler)', async () => {
             vi.mocked(mockInitAuth).mockClear();
+            vi.mocked(mockVerifyToken).mockClear();
             const envWithoutSecret = createTestEnv({ HAPPY_MASTER_SECRET: '' });
 
-            await app.request('/v1/websocket/stats', {
+            const response = await app.request('/v1/websocket/stats', {
                 method: 'GET',
                 headers: {
                     'Authorization': 'Bearer valid-token',
                 },
             }, envWithoutSecret);
 
-            // verifyToken should still be called as the flow continues
-            // verifyToken is called with (token, db)
-            expect(mockVerifyToken).toHaveBeenCalledWith('valid-token', expect.anything());
+            // Middleware validates env BEFORE route handler executes
+            // When HAPPY_MASTER_SECRET is missing, validateEnv throws and middleware returns 500
+            expect(response.status).toBe(500);
+            const body = await response.json();
+            expect(body.error).toBe('Configuration Error');
+            expect(body.message).toContain('HAPPY_MASTER_SECRET');
 
-            // initAuth should not be called with empty string (from this route)
+            // Auth functions should NOT be called - middleware blocks before route handler
+            expect(mockVerifyToken).not.toHaveBeenCalled();
             expect(mockInitAuth).not.toHaveBeenCalledWith('');
         });
 
@@ -555,11 +564,12 @@ describe('WebSocket Routes with Drizzle Mocking', () => {
             expect(mockInitAuth).toHaveBeenCalledWith('test-secret-for-vitest-tests');
         });
 
-        it('should skip initAuth in broadcast handler when HAPPY_MASTER_SECRET is falsy', async () => {
+        it('should return 500 error when HAPPY_MASTER_SECRET is falsy (broadcast handler)', async () => {
             vi.mocked(mockInitAuth).mockClear();
+            vi.mocked(mockVerifyToken).mockClear();
             const envWithoutSecret = createTestEnv({ HAPPY_MASTER_SECRET: '' });
 
-            await app.request('/v1/websocket/broadcast', {
+            const response = await app.request('/v1/websocket/broadcast', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -573,11 +583,15 @@ describe('WebSocket Routes with Drizzle Mocking', () => {
                 }),
             }, envWithoutSecret);
 
-            // verifyToken should still be called as the flow continues
-            // verifyToken is called with (token, db)
-            expect(mockVerifyToken).toHaveBeenCalledWith('valid-token', expect.anything());
+            // Middleware validates env BEFORE route handler executes
+            // When HAPPY_MASTER_SECRET is missing, validateEnv throws and middleware returns 500
+            expect(response.status).toBe(500);
+            const body = await response.json();
+            expect(body.error).toBe('Configuration Error');
+            expect(body.message).toContain('HAPPY_MASTER_SECRET');
 
-            // initAuth should not be called with empty string (from this route)
+            // Auth functions should NOT be called - middleware blocks before route handler
+            expect(mockVerifyToken).not.toHaveBeenCalled();
             expect(mockInitAuth).not.toHaveBeenCalledWith('');
         });
 
