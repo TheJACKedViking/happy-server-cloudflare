@@ -2,9 +2,13 @@ import { z } from "zod";
 import { type Fastify } from "../types";
 import * as semver from 'semver';
 import { ANDROID_UP_TO_DATE, IOS_UP_TO_DATE } from "@/versions";
+import { RateLimitTiers } from "../utils/enableRateLimiting";
 
 export function versionRoutes(app: Fastify) {
     app.post('/v1/version', {
+        config: {
+            rateLimit: RateLimitTiers.LOW  // 120/min - simple version check, no DB
+        },
         schema: {
             body: z.object({
                 platform: z.string(),

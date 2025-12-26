@@ -7,11 +7,15 @@ import { Context } from "@/context";
 import { friendRemove } from "@/app/social/friendRemove";
 import { friendList } from "@/app/social/friendList";
 import { buildUserProfile } from "@/app/social/type";
+import { RateLimitTiers } from "../utils/enableRateLimiting";
 
 export async function userRoutes(app: Fastify) {
 
     // Get user profile
     app.get('/v1/user/:id', {
+        config: {
+            rateLimit: RateLimitTiers.LOW  // 120/min - single user lookup
+        },
         schema: {
             params: z.object({
                 id: z.string()
@@ -60,6 +64,9 @@ export async function userRoutes(app: Fastify) {
 
     // Search for users
     app.get('/v1/user/search', {
+        config: {
+            rateLimit: RateLimitTiers.MEDIUM  // 60/min - user search
+        },
         schema: {
             querystring: z.object({
                 query: z.string()
@@ -110,6 +117,9 @@ export async function userRoutes(app: Fastify) {
 
     // Add friend
     app.post('/v1/friends/add', {
+        config: {
+            rateLimit: RateLimitTiers.HIGH  // 30/min - relationship modification
+        },
         schema: {
             body: z.object({
                 uid: z.string()
@@ -130,6 +140,9 @@ export async function userRoutes(app: Fastify) {
     });
 
     app.post('/v1/friends/remove', {
+        config: {
+            rateLimit: RateLimitTiers.HIGH  // 30/min - relationship modification
+        },
         schema: {
             body: z.object({
                 uid: z.string()
@@ -150,6 +163,9 @@ export async function userRoutes(app: Fastify) {
     });
 
     app.get('/v1/friends', {
+        config: {
+            rateLimit: RateLimitTiers.MEDIUM  // 60/min - friends list
+        },
         schema: {
             response: {
                 200: z.object({

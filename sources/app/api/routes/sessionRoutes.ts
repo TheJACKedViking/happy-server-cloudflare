@@ -7,12 +7,16 @@ import { log } from "@/utils/log";
 import { randomKeyNaked } from "@/utils/randomKeyNaked";
 import { allocateUserSeq } from "@/storage/seq";
 import { sessionDelete } from "@/app/session/sessionDelete";
+import { RateLimitTiers } from "../utils/enableRateLimiting";
 
 export function sessionRoutes(app: Fastify) {
 
     // Sessions API
     app.get('/v1/sessions', {
         preHandler: app.authenticate,
+        config: {
+            rateLimit: RateLimitTiers.MEDIUM  // 60/min - returns up to 150 sessions
+        },
     }, async (request, reply) => {
         const userId = request.userId;
 
@@ -73,6 +77,9 @@ export function sessionRoutes(app: Fastify) {
     // V2 Sessions API - Active sessions only
     app.get('/v2/sessions/active', {
         preHandler: app.authenticate,
+        config: {
+            rateLimit: RateLimitTiers.LOW  // 120/min - filtered, small result set
+        },
         schema: {
             querystring: z.object({
                 limit: z.coerce.number().int().min(1).max(500).default(150)
@@ -125,6 +132,9 @@ export function sessionRoutes(app: Fastify) {
     // V2 Sessions API - Cursor-based pagination with change tracking
     app.get('/v2/sessions', {
         preHandler: app.authenticate,
+        config: {
+            rateLimit: RateLimitTiers.MEDIUM  // 60/min - cursor pagination, can be expensive
+        },
         schema: {
             querystring: z.object({
                 cursor: z.string().optional(),
@@ -217,6 +227,9 @@ export function sessionRoutes(app: Fastify) {
 
     // Create or load session by tag
     app.post('/v1/sessions', {
+        config: {
+            rateLimit: RateLimitTiers.HIGH  // 30/min - DB lookup + potential create + event emission
+        },
         schema: {
             body: z.object({
                 tag: z.string(),
@@ -306,6 +319,9 @@ export function sessionRoutes(app: Fastify) {
     });
 
     app.get('/v1/sessions/:sessionId/messages', {
+        config: {
+            rateLimit: RateLimitTiers.MEDIUM  // 60/min - up to 150 messages per request
+        },
         schema: {
             params: z.object({
                 sessionId: z.string()
@@ -366,6 +382,9 @@ export function sessionRoutes(app: Fastify) {
 
     // Delete session
     app.delete('/v1/sessions/:sessionId', {
+        config: {
+            rateLimit: RateLimitTiers.HIGH  // 30/min - cascade delete + event emission
+        },
         schema: {
             params: z.object({
                 sessionId: z.string()

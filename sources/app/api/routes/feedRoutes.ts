@@ -4,10 +4,14 @@ import { FeedBodySchema } from "@/app/feed/types";
 import { feedGet } from "@/app/feed/feedGet";
 import { Context } from "@/context";
 import { db } from "@/storage/db";
+import { RateLimitTiers } from "../utils/enableRateLimiting";
 
 export function feedRoutes(app: Fastify) {
     app.get('/v1/feed', {
         preHandler: app.authenticate,
+        config: {
+            rateLimit: RateLimitTiers.MEDIUM  // 60/min - feed aggregation
+        },
         schema: {
             querystring: z.object({
                 before: z.string().optional(),

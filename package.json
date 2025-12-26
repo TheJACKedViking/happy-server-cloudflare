@@ -45,6 +45,7 @@
     "@date-fns/tz": "^1.4.1",
     "@fastify/bearer-auth": "^10.1.2",
     "@fastify/cors": "^11.2.0",
+    "@fastify/rate-limit": "^10.3.0",
     "@happy/errors": "workspace:*",
     "@happy/protocol": "workspace:*",
     "@prisma/client": "^7.2.0",

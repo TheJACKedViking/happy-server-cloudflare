@@ -6,10 +6,14 @@ import { log } from "@/utils/log";
 import { randomKeyNaked } from "@/utils/randomKeyNaked";
 import { allocateUserSeq } from "@/storage/seq";
 import { buildNewMachineUpdate, buildUpdateMachineUpdate } from "@/app/events/eventRouter";
+import { RateLimitTiers } from "../utils/enableRateLimiting";
 
 export function machinesRoutes(app: Fastify) {
     app.post('/v1/machines', {
         preHandler: app.authenticate,
+        config: {
+            rateLimit: RateLimitTiers.HIGH  // 30/min - DB lookup + potential create + events
+        },
         schema: {
             body: z.object({
                 id: z.string(),
@@ -111,6 +115,9 @@ export function machinesRoutes(app: Fastify) {
     // Machines API
     app.get('/v1/machines', {
         preHandler: app.authenticate,
+        config: {
+            rateLimit: RateLimitTiers.MEDIUM  // 60/min - machine listing
+        },
     }, async (request, reply) => {
         const userId = request.userId;
 
@@ -137,6 +144,9 @@ export function machinesRoutes(app: Fastify) {
     // GET /v1/machines/:id - Get single machine by ID
     app.get('/v1/machines/:id', {
         preHandler: app.authenticate,
+        config: {
+            rateLimit: RateLimitTiers.LOW  // 120/min - single item lookup
+        },
         schema: {
             params: z.object({
                 id: z.string()
@@ -177,6 +187,9 @@ export function machinesRoutes(app: Fastify) {
     // PUT /v1/machines/:id/status - Update machine active/online status
     app.put('/v1/machines/:id/status', {
         preHandler: app.authenticate,
+        config: {
+            rateLimit: RateLimitTiers.HIGH  // 30/min - status update + event emission
+        },
         schema: {
             params: z.object({
                 id: z.string()

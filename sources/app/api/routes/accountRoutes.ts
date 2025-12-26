@@ -8,10 +8,14 @@ import { allocateUserSeq } from "@/storage/seq";
 import { log } from "@/utils/log";
 import { AccountProfile } from "@/types";
 import { createHash } from "crypto";
+import { RateLimitTiers } from "../utils/enableRateLimiting";
 
 export function accountRoutes(app: Fastify) {
     app.get('/v1/account/profile', {
         preHandler: app.authenticate,
+        config: {
+            rateLimit: RateLimitTiers.MEDIUM  // 60/min - profile with relations
+        },
     }, async (request, reply) => {
         const userId = request.userId;
         const user = await db.account.findUniqueOrThrow({
@@ -60,6 +64,9 @@ export function accountRoutes(app: Fastify) {
     // Get Account Settings API
     app.get('/v1/account/settings', {
         preHandler: app.authenticate,
+        config: {
+            rateLimit: RateLimitTiers.MEDIUM  // 60/min - settings lookup
+        },
         schema: {
             response: {
                 200: z.object({
@@ -93,6 +100,9 @@ export function accountRoutes(app: Fastify) {
 
     // Update Account Settings API
     app.post('/v1/account/settings', {
+        config: {
+            rateLimit: RateLimitTiers.HIGH  // 30/min - settings update with version check
+        },
         schema: {
             body: z.object({
                 settings: z.string().nullable(),
@@ -198,6 +208,9 @@ export function accountRoutes(app: Fastify) {
     });
 
     app.post('/v1/usage/query', {
+        config: {
+            rateLimit: RateLimitTiers.MEDIUM  // 60/min - usage aggregation query
+        },
         schema: {
             body: z.object({
                 sessionId: z.string().nullish(),

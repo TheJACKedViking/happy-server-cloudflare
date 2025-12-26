@@ -1,10 +1,14 @@
 import { z } from "zod";
 import { type Fastify } from "../types";
 import { log } from "@/utils/log";
+import { RateLimitTiers } from "../utils/enableRateLimiting";
 
 export function voiceRoutes(app: Fastify) {
     app.post('/v1/voice/token', {
         preHandler: app.authenticate,
+        config: {
+            rateLimit: RateLimitTiers.CRITICAL  // 5/min - external paid APIs (ElevenLabs, RevenueCat)
+        },
         schema: {
             body: z.object({
                 agentId: z.string(),

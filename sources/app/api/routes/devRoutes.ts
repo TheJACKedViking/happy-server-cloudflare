@@ -1,11 +1,15 @@
 import { z } from 'zod';
 import { Fastify } from '../types';
+import { RateLimitTiers } from "../utils/enableRateLimiting";
 
 export function devRoutes(app: Fastify) {
 
     // Combined logging endpoint (only when explicitly enabled)
     if (process.env.DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING) {
         app.post('/logs-combined-from-cli-and-mobile-for-simple-ai-debugging', {
+            config: {
+                rateLimit: RateLimitTiers.HIGH  // 30/min - prevent log flooding
+            },
             schema: {
                 body: z.object({
                     timestamp: z.string(),

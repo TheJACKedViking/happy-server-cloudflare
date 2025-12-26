@@ -1,11 +1,15 @@
 import { z } from "zod";
 import { type Fastify } from "../types";
 import { db } from "@/storage/db";
+import { RateLimitTiers } from "../utils/enableRateLimiting";
 
 export function pushRoutes(app: Fastify) {
-    
+
     // Push Token Registration API
     app.post('/v1/push-tokens', {
+        config: {
+            rateLimit: RateLimitTiers.HIGH  // 30/min - token registration
+        },
         schema: {
             body: z.object({
                 token: z.string()
@@ -49,6 +53,9 @@ export function pushRoutes(app: Fastify) {
 
     // Delete Push Token API
     app.delete('/v1/push-tokens/:token', {
+        config: {
+            rateLimit: RateLimitTiers.HIGH  // 30/min - token deletion
+        },
         schema: {
             params: z.object({
                 token: z.string()
@@ -83,7 +90,10 @@ export function pushRoutes(app: Fastify) {
 
     // Get Push Tokens API
     app.get('/v1/push-tokens', {
-        preHandler: app.authenticate
+        preHandler: app.authenticate,
+        config: {
+            rateLimit: RateLimitTiers.MEDIUM  // 60/min - token listing
+        }
     }, async (request, reply) => {
         const userId = request.userId;
 

@@ -19,6 +19,7 @@ import { enableMonitoring } from "./utils/enableMonitoring";
 import { enableErrorHandlers } from "./utils/enableErrorHandlers";
 import { enableAuthentication } from "./utils/enableAuthentication";
 import { enableCorrelationId } from "./utils/enableCorrelationId";
+import { enableRateLimiting } from "./utils/enableRateLimiting";
 import { userRoutes } from "./routes/userRoutes";
 import { feedRoutes } from "./routes/feedRoutes";
 import { kvRoutes } from "./routes/kvRoutes";
@@ -62,6 +63,7 @@ export async function startApi() {
     enableMonitoring(typed);
     enableErrorHandlers(typed);
     enableAuthentication(typed);
+    await enableRateLimiting(typed);  // Rate limiting uses userId from auth, so comes after
 
     // Routes
     authRoutes(typed);

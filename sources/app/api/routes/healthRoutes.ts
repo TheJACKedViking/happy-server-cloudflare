@@ -51,6 +51,9 @@ export function healthRoutes(app: Fastify) {
      * @route GET /health
      */
     app.get('/health', {
+        config: {
+            rateLimit: false  // Health checks exempt from rate limiting for monitoring systems
+        },
         schema: {
             response: {
                 200: HealthResponseSchema
@@ -79,6 +82,9 @@ export function healthRoutes(app: Fastify) {
      * @route GET /ready
      */
     app.get('/ready', {
+        config: {
+            rateLimit: false  // Readiness checks exempt from rate limiting for orchestration
+        },
         schema: {
             response: {
                 200: ReadyResponseSchema,

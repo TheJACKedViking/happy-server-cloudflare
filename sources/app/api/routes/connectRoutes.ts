@@ -8,6 +8,7 @@ import { githubConnect } from "@/app/github/githubConnect";
 import { githubDisconnect } from "@/app/github/githubDisconnect";
 import { Context } from "@/context";
 import { db } from "@/storage/db";
+import { RateLimitTiers } from "../utils/enableRateLimiting";
 
 export function connectRoutes(app: Fastify) {
 
@@ -47,6 +48,9 @@ export function connectRoutes(app: Fastify) {
     // GitHub OAuth parameters
     app.get('/v1/connect/github/params', {
         preHandler: app.authenticate,
+        config: {
+            rateLimit: RateLimitTiers.HIGH  // 30/min - OAuth flow initiation
+        },
         schema: {
             response: {
                 200: z.object({
@@ -86,6 +90,9 @@ export function connectRoutes(app: Fastify) {
 
     // GitHub OAuth callback (GET for redirect from GitHub)
     app.get('/v1/connect/github/callback', {
+        config: {
+            rateLimit: RateLimitTiers.HIGH  // 30/min - OAuth callback + token exchange
+        },
         schema: {
             querystring: z.object({
                 code: z.string(),
@@ -166,6 +173,9 @@ export function connectRoutes(app: Fastify) {
 
     // GitHub webhook handler with type safety
     app.post('/v1/connect/github/webhook', {
+        config: {
+            rateLimit: RateLimitTiers.HIGH  // 30/min - webhook from GitHub (external)
+        },
         schema: {
             headers: z.object({
                 'x-hub-signature-256': z.string(),
@@ -233,6 +243,9 @@ export function connectRoutes(app: Fastify) {
     // GitHub App installation status endpoint
     app.get('/v1/connect/github/installation', {
         preHandler: app.authenticate,
+        config: {
+            rateLimit: RateLimitTiers.MEDIUM  // 60/min - installation status lookup
+        },
         schema: {
             response: {
                 200: z.object({
@@ -305,6 +318,9 @@ export function connectRoutes(app: Fastify) {
     // GitHub disconnect endpoint
     app.delete('/v1/connect/github', {
         preHandler: app.authenticate,
+        config: {
+            rateLimit: RateLimitTiers.HIGH  // 30/min - account modification
+        },
         schema: {
             response: {
                 200: z.object({
@@ -345,6 +361,9 @@ export function connectRoutes(app: Fastify) {
 
     app.post('/v1/connect/:vendor/register', {
         preHandler: app.authenticate,
+        config: {
+            rateLimit: RateLimitTiers.HIGH  // 30/min - token registration
+        },
         schema: {
             body: z.object({
                 token: z.string()
@@ -366,6 +385,9 @@ export function connectRoutes(app: Fastify) {
 
     app.get('/v1/connect/:vendor/token', {
         preHandler: app.authenticate,
+        config: {
+            rateLimit: RateLimitTiers.MEDIUM  // 60/min - token lookup
+        },
         schema: {
             params: z.object({
                 vendor: z.enum(['openai', 'anthropic', 'gemini'])
@@ -391,6 +413,9 @@ export function connectRoutes(app: Fastify) {
 
     app.delete('/v1/connect/:vendor', {
         preHandler: app.authenticate,
+        config: {
+            rateLimit: RateLimitTiers.HIGH  // 30/min - token deletion
+        },
         schema: {
             params: z.object({
                 vendor: z.enum(['openai', 'anthropic', 'gemini'])
@@ -409,6 +434,9 @@ export function connectRoutes(app: Fastify) {
 
     app.get('/v1/connect/tokens', {
         preHandler: app.authenticate,
+        config: {
+            rateLimit: RateLimitTiers.MEDIUM  // 60/min - all tokens listing
+        },
         schema: {
             response: {
                 200: z.object({

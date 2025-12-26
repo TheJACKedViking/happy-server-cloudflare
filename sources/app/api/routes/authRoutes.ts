@@ -4,9 +4,13 @@ import * as privacyKit from "privacy-kit";
 import { db } from "@/storage/db";
 import { auth } from "@/app/auth/auth";
 import { log } from "@/utils/log";
+import { RateLimitTiers } from "../utils/enableRateLimiting";
 
 export function authRoutes(app: Fastify) {
     app.post('/v1/auth', {
+        config: {
+            rateLimit: RateLimitTiers.HIGH  // 30/min - crypto verification + DB upsert
+        },
         schema: {
             body: z.object({
                 publicKey: z.string(),
@@ -39,6 +43,9 @@ export function authRoutes(app: Fastify) {
     });
 
     app.post('/v1/auth/request', {
+        config: {
+            rateLimit: RateLimitTiers.HIGH  // 30/min - crypto validation + DB upsert
+        },
         schema: {
             body: z.object({
                 publicKey: z.string(),
@@ -88,6 +95,9 @@ export function authRoutes(app: Fastify) {
 
     // Get auth request status
     app.get('/v1/auth/request/status', {
+        config: {
+            rateLimit: RateLimitTiers.LOW  // 120/min - simple DB lookup
+        },
         schema: {
             querystring: z.object({
                 publicKey: z.string(),
@@ -126,6 +136,9 @@ export function authRoutes(app: Fastify) {
     // Approve auth request
     app.post('/v1/auth/response', {
         preHandler: app.authenticate,
+        config: {
+            rateLimit: RateLimitTiers.HIGH  // 30/min - auth required + DB update
+        },
         schema: {
             body: z.object({
                 response: z.string(),
@@ -167,6 +180,9 @@ export function authRoutes(app: Fastify) {
 
     // Account auth request
     app.post('/v1/auth/account/request', {
+        config: {
+            rateLimit: RateLimitTiers.HIGH  // 30/min - crypto validation + DB upsert
+        },
         schema: {
             body: z.object({
                 publicKey: z.string(),
@@ -213,6 +229,9 @@ export function authRoutes(app: Fastify) {
     // Approve account auth request
     app.post('/v1/auth/account/response', {
         preHandler: app.authenticate,
+        config: {
+            rateLimit: RateLimitTiers.HIGH  // 30/min - auth required + DB update
+        },
         schema: {
             body: z.object({
                 response: z.string(),

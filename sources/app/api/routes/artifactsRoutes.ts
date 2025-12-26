@@ -6,6 +6,7 @@ import { randomKeyNaked } from "@/utils/randomKeyNaked";
 import { allocateUserSeq } from "@/storage/seq";
 import { log } from "@/utils/log";
 import * as privacyKit from "privacy-kit";
+import { RateLimitTiers } from "../utils/enableRateLimiting";
 
 // Helper to cast Uint8Array to the type Prisma expects (TypeScript 5.x strict typing)
 function toBytes(data: Uint8Array): Uint8Array<ArrayBuffer> {
@@ -17,6 +18,9 @@ export function artifactsRoutes(app: Fastify) {
     // Supports incremental sync via optional sinceSeq query parameter (HAP-492)
     app.get('/v1/artifacts', {
         preHandler: app.authenticate,
+        config: {
+            rateLimit: RateLimitTiers.MEDIUM  // 60/min - all user artifacts
+        },
         schema: {
             querystring: z.object({
                 sinceSeq: z.coerce.number().int().min(0).optional()
@@ -90,6 +94,9 @@ export function artifactsRoutes(app: Fastify) {
     // GET /v1/artifacts/:id - Get single artifact with full body
     app.get('/v1/artifacts/:id', {
         preHandler: app.authenticate,
+        config: {
+            rateLimit: RateLimitTiers.LOW  // 120/min - single item lookup
+        },
         schema: {
             params: z.object({
                 id: z.string()
@@ -150,6 +157,9 @@ export function artifactsRoutes(app: Fastify) {
     // POST /v1/artifacts - Create new artifact
     app.post('/v1/artifacts', {
         preHandler: app.authenticate,
+        config: {
+            rateLimit: RateLimitTiers.HIGH  // 30/min - DB write + event emission
+        },
         schema: {
             body: z.object({
                 id: z.string().uuid(),
@@ -254,6 +264,9 @@ export function artifactsRoutes(app: Fastify) {
     // POST /v1/artifacts/:id - Update artifact with version control
     app.post('/v1/artifacts/:id', {
         preHandler: app.authenticate,
+        config: {
+            rateLimit: RateLimitTiers.HIGH  // 30/min - version control + DB update + event emission
+        },
         schema: {
             params: z.object({
                 id: z.string()
@@ -385,6 +398,9 @@ export function artifactsRoutes(app: Fastify) {
     // DELETE /v1/artifacts/:id - Delete artifact
     app.delete('/v1/artifacts/:id', {
         preHandler: app.authenticate,
+        config: {
+            rateLimit: RateLimitTiers.HIGH  // 30/min - DB delete + event emission
+        },
         schema: {
             params: z.object({
                 id: z.string()

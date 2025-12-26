@@ -5,11 +5,15 @@ import { kvList } from "@/app/kv/kvList";
 import { kvBulkGet } from "@/app/kv/kvBulkGet";
 import { kvMutate } from "@/app/kv/kvMutate";
 import { log } from "@/utils/log";
+import { RateLimitTiers } from "../utils/enableRateLimiting";
 
 export function kvRoutes(app: Fastify) {
     // GET /v1/kv/:key - Get single value
     app.get('/v1/kv/:key', {
         preHandler: app.authenticate,
+        config: {
+            rateLimit: RateLimitTiers.MEDIUM  // 60/min - KV lookup
+        },
         schema: {
             params: z.object({
                 key: z.string()
@@ -49,6 +53,9 @@ export function kvRoutes(app: Fastify) {
     // GET /v1/kv - List key-value pairs with optional prefix filter
     app.get('/v1/kv', {
         preHandler: app.authenticate,
+        config: {
+            rateLimit: RateLimitTiers.MEDIUM  // 60/min - KV listing
+        },
         schema: {
             querystring: z.object({
                 prefix: z.string().optional(),
@@ -83,6 +90,9 @@ export function kvRoutes(app: Fastify) {
     // POST /v1/kv/bulk - Bulk get values
     app.post('/v1/kv/bulk', {
         preHandler: app.authenticate,
+        config: {
+            rateLimit: RateLimitTiers.MEDIUM  // 60/min - bulk KV lookup
+        },
         schema: {
             body: z.object({
                 keys: z.array(z.string()).min(1).max(100)
@@ -116,6 +126,9 @@ export function kvRoutes(app: Fastify) {
     // PUT /v1/kv - Atomic batch mutation
     app.post('/v1/kv', {
         preHandler: app.authenticate,
+        config: {
+            rateLimit: RateLimitTiers.HIGH  // 30/min - batch mutation
+        },
         schema: {
             body: z.object({
                 mutations: z.array(z.object({

@@ -2,11 +2,15 @@ import { Fastify } from "../types";
 import { z } from "zod";
 import { db } from "@/storage/db";
 import { log } from "@/utils/log";
+import { RateLimitTiers } from "../utils/enableRateLimiting";
 
 export function accessKeysRoutes(app: Fastify) {
     // Get Access Key API
     app.get('/v1/access-keys/:sessionId/:machineId', {
         preHandler: app.authenticate,
+        config: {
+            rateLimit: RateLimitTiers.MEDIUM  // 60/min - access key lookup
+        },
         schema: {
             params: z.object({
                 sessionId: z.string(),
@@ -80,6 +84,9 @@ export function accessKeysRoutes(app: Fastify) {
     // Create Access Key API
     app.post('/v1/access-keys/:sessionId/:machineId', {
         preHandler: app.authenticate,
+        config: {
+            rateLimit: RateLimitTiers.HIGH  // 30/min - access key creation
+        },
         schema: {
             params: z.object({
                 sessionId: z.string(),
@@ -176,6 +183,9 @@ export function accessKeysRoutes(app: Fastify) {
     // Update Access Key API
     app.put('/v1/access-keys/:sessionId/:machineId', {
         preHandler: app.authenticate,
+        config: {
+            rateLimit: RateLimitTiers.HIGH  // 30/min - access key update
+        },
         schema: {
             params: z.object({
                 sessionId: z.string(),
