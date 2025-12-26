@@ -44,6 +44,23 @@ export default [
             '@typescript-eslint/explicit-function-return-type': 'off',
             '@typescript-eslint/explicit-module-boundary-types': 'off',
             'no-undef': 'off', // TypeScript handles this
+
+            // Enforce proper "GitHub" casing in PascalCase identifiers (HAP-502)
+            // "Github" is incorrect; should be "GitHub" (capital H)
+            // This only applies to typeLike (interfaces, types, classes, enums)
+            // camelCase variables like "githubToken" are fine (they start lowercase)
+            '@typescript-eslint/naming-convention': [
+                'warn',
+                {
+                    selector: 'typeLike',
+                    format: ['PascalCase'],
+                    custom: {
+                        // Fail if identifier contains "Github" (should be "GitHub")
+                        regex: 'Github',
+                        match: false,
+                    },
+                },
+            ],
         },
     },
     // k6 load test files - JavaScript files with k6-specific globals
