@@ -39,8 +39,9 @@ export const PushTokenParamSchema = z
 
 /**
  * Single push token item
+ * @internal Used for composing response schemas
  */
-export const PushTokenItemSchema = z
+const PushTokenItemSchema = z
     .object({
         id: z.string().openapi({
             description: 'Token record ID',

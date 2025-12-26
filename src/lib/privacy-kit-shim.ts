@@ -45,11 +45,3 @@ export function encodeHex(data: Uint8Array | Buffer): string {
     return hex.encode(uint8, true); // lowercase
 }
 
-/**
- * Decode a hex string to Uint8Array
- * @param str - Hex encoded string
- * @returns Decoded binary data
- */
-export function decodeHex(str: string): Uint8Array {
-    return hex.decode(str);
-}

@@ -6,8 +6,9 @@ import { z } from '@hono/zod-openapi';
 
 /**
  * Single KV item
+ * @internal Used for composing response schemas
  */
-export const KVItemSchema = z
+const KVItemSchema = z
     .object({
         key: z.string().openapi({
             description: 'Storage key',
@@ -93,8 +94,9 @@ export const KVBulkGetResponseSchema = z
 
 /**
  * Single mutation in batch
+ * @internal Used for composing request schemas
  */
-export const KVMutationSchema = z
+const KVMutationSchema = z
     .object({
         key: z.string().openapi({
             description: 'Storage key',

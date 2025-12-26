@@ -15,8 +15,9 @@ import { z } from '@hono/zod-openapi';
 
 /**
  * Schema for groupBy aggregation period
+ * @internal Used for composing request/response schemas
  */
-export const GroupBySchema = z
+const GroupBySchema = z
     .enum(['hour', 'day'])
     .openapi('GroupBy');
 
@@ -25,8 +26,9 @@ export const GroupBySchema = z
  *
  * Represents aggregated usage for a time period (hour or day).
  * All numeric values are already summed across all reports in that period.
+ * @internal Used for composing response schemas
  */
-export const UsageDataPointSchema = z
+const UsageDataPointSchema = z
     .object({
         timestamp: z.number().int().openapi({
             description: 'Unix timestamp (seconds) for the start of this aggregation period',

@@ -12,8 +12,9 @@ import { z } from '@hono/zod-openapi';
 
 /**
  * Schema for uploaded file metadata in API responses
+ * @internal Used for composing response schemas
  */
-export const UploadedFileSchema = z
+const UploadedFileSchema = z
     .object({
         id: z.string().openapi({
             description: 'Unique file identifier (cuid2)',
@@ -72,20 +73,6 @@ export const FileIdParamSchema = z.object({
     }),
 });
 
-/**
- * Schema for file path in URL parameters
- */
-export const FilePathParamSchema = z.object({
-    path: z.string().openapi({
-        description: 'Full file path in R2',
-        example: 'avatars/user123/clm8z0xyz000008l5g1h9e2ab.jpg',
-        param: {
-            in: 'path',
-            name: 'path',
-        },
-    }),
-});
-
 // ============================================================================
 // List Files
 // ============================================================================
@@ -132,21 +119,6 @@ export const ListFilesResponseSchema = z
  * The actual file validation happens in the route handler since
  * Zod OpenAPI doesn't fully support multipart form data schemas.
  */
-
-export const UploadFileQuerySchema = z.object({
-    category: z
-        .enum(['avatars', 'documents', 'files'])
-        .optional()
-        .default('files')
-        .openapi({
-            description: 'File category for organization',
-            example: 'documents',
-        }),
-    reuseKey: z.string().optional().openapi({
-        description: 'Optional key for deduplication (returns existing file if matches)',
-        example: 'profile-avatar-v2',
-    }),
-});
 
 export const UploadFileResponseSchema = z
     .object({
@@ -202,13 +174,6 @@ export const DeleteFileResponseSchema = z
 // ============================================================================
 // Avatar-specific Schemas
 // ============================================================================
-
-export const UploadAvatarQuerySchema = z.object({
-    reuseKey: z.string().optional().openapi({
-        description: 'Reuse key for avatar deduplication',
-        example: 'profile-avatar',
-    }),
-});
 
 export const UploadAvatarResponseSchema = z
     .object({

@@ -22,8 +22,9 @@ export const RelationshipStatusSchema = z
 /**
  * Schema for user profile in API responses
  * Note: Avatar removed - frontend generates avatars dynamically
+ * @internal Used for composing response schemas
  */
-export const UserProfileSchema = z
+const UserProfileSchema = z
     .object({
         id: z.string().openapi({
             description: 'Unique user identifier',

@@ -13,8 +13,9 @@ import { z } from '@hono/zod-openapi';
 
 /**
  * Schema for artifact object returned in API responses
+ * @internal Used for composing response schemas
  */
-export const ArtifactSchema = z
+const ArtifactSchema = z
     .object({
         id: z.string().openapi({
             description: 'Unique artifact identifier (UUID)',
@@ -49,8 +50,9 @@ export const ArtifactSchema = z
 
 /**
  * Schema for full artifact with body (GET /v1/artifacts/:id)
+ * @internal Used for composing response schemas
  */
-export const FullArtifactSchema = ArtifactSchema.extend({
+const FullArtifactSchema = ArtifactSchema.extend({
     body: z.string().openapi({
         description: 'Base64-encoded encrypted artifact body',
         example: 'cXJzdHV2d3h5ejAxMjM0NTY3ODk=',
@@ -174,8 +176,9 @@ export const UpdateArtifactRequestSchema = z
 
 /**
  * Schema for successful artifact update
+ * @internal Used in union type
  */
-export const UpdateArtifactSuccessResponseSchema = z
+const UpdateArtifactSuccessResponseSchema = z
     .object({
         success: z.literal(true).openapi({
             description: 'Update succeeded',
@@ -193,8 +196,9 @@ export const UpdateArtifactSuccessResponseSchema = z
 
 /**
  * Schema for artifact update version mismatch
+ * @internal Used in union type
  */
-export const UpdateArtifactVersionMismatchResponseSchema = z
+const UpdateArtifactVersionMismatchResponseSchema = z
     .object({
         success: z.literal(false).openapi({
             description: 'Update failed due to version mismatch',
@@ -285,14 +289,3 @@ export const UnauthorizedErrorSchema = z
     })
     .openapi('UnauthorizedError');
 
-/**
- * Schema for 500 Internal Server Error
- */
-export const InternalErrorSchema = z
-    .object({
-        error: z.string().openapi({
-            description: 'Error message',
-            example: 'Failed to create artifact',
-        }),
-    })
-    .openapi('InternalError');

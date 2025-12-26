@@ -112,8 +112,9 @@ export const GitHubWebhookResponseSchema = z
 
 /**
  * Schema for AI vendor types
+ * @internal Used for path parameter validation
  */
-export const AIVendorSchema = z.enum(['openai', 'anthropic', 'gemini']);
+const AIVendorSchema = z.enum(['openai', 'anthropic', 'gemini']);
 
 /**
  * Schema for AI vendor path parameter
@@ -179,8 +180,9 @@ export const DeleteAITokenResponseSchema = z
 
 /**
  * Schema for AI token object
+ * @internal Used for composing response schemas
  */
-export const AITokenSchema = z
+const AITokenSchema = z
     .object({
         vendor: z.string().openapi({
             description: 'AI service vendor',
@@ -244,14 +246,3 @@ export const UnauthorizedErrorSchema = z
     })
     .openapi('UnauthorizedError');
 
-/**
- * Schema for 500 Internal Server Error
- */
-export const InternalErrorSchema = z
-    .object({
-        error: z.string().openapi({
-            description: 'Error message',
-            example: 'Failed to connect GitHub account',
-        }),
-    })
-    .openapi('InternalError');

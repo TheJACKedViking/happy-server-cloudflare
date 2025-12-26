@@ -14,8 +14,9 @@ import { z } from '@hono/zod-openapi';
 
 /**
  * Schema for access key object returned in API responses
+ * @internal Used for composing response schemas
  */
-export const AccessKeySchema = z
+const AccessKeySchema = z
     .object({
         data: z.string().openapi({
             description: 'Encrypted access key data',
@@ -130,8 +131,9 @@ export const UpdateAccessKeyRequestSchema = z
 
 /**
  * Schema for successful access key update
+ * @internal Used in union type
  */
-export const UpdateAccessKeySuccessResponseSchema = z
+const UpdateAccessKeySuccessResponseSchema = z
     .object({
         success: z.literal(true).openapi({
             description: 'Update succeeded',
@@ -145,8 +147,9 @@ export const UpdateAccessKeySuccessResponseSchema = z
 
 /**
  * Schema for access key update version mismatch
+ * @internal Used in union type
  */
-export const UpdateAccessKeyVersionMismatchResponseSchema = z
+const UpdateAccessKeyVersionMismatchResponseSchema = z
     .object({
         success: z.literal(false).openapi({
             description: 'Update failed due to version mismatch',
@@ -213,14 +216,3 @@ export const UnauthorizedErrorSchema = z
     })
     .openapi('UnauthorizedError');
 
-/**
- * Schema for 500 Internal Server Error
- */
-export const InternalErrorSchema = z
-    .object({
-        error: z.string().openapi({
-            description: 'Error message',
-            example: 'Failed to create access key',
-        }),
-    })
-    .openapi('InternalError');

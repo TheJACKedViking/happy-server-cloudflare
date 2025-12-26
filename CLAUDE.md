@@ -1,5 +1,9 @@
 # Happy Server Workers - Development Guidelines
 
+> **📍 Part of the Happy monorepo** — See root [`CLAUDE.md`](../CLAUDE.md) for overall architecture and cross-project guidelines.
+
+---
+
 This document contains development guidelines for the Happy Server on Cloudflare Workers. This guide OVERRIDES any default behaviors and MUST be followed exactly.
 
 ## Project Overview

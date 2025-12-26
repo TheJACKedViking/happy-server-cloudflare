@@ -13,8 +13,9 @@ import { z } from '@hono/zod-openapi';
 
 /**
  * Schema for machine object returned in API responses
+ * @internal Used for composing response schemas
  */
-export const MachineSchema = z
+const MachineSchema = z
     .object({
         id: z.string().openapi({
             description: 'Unique machine identifier',
@@ -245,14 +246,3 @@ export const UnauthorizedErrorSchema = z
     })
     .openapi('UnauthorizedError');
 
-/**
- * Schema for 400 Bad Request error
- */
-export const BadRequestErrorSchema = z
-    .object({
-        error: z.string().openapi({
-            description: 'Error message',
-            example: 'Invalid machine data',
-        }),
-    })
-    .openapi('BadRequestError');

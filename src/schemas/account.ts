@@ -16,27 +16,22 @@ import { GitHubProfileSchema as CanonicalGitHubProfileSchema } from '@happy/prot
 // ============================================================================
 
 /**
- * Schema for connected service vendor names
- */
-export const ServiceVendorSchema = z
-    .enum(['openai', 'anthropic', 'gemini'])
-    .openapi('ServiceVendor');
-
-/**
  * Schema for GitHub profile data with OpenAPI metadata
  *
  * Uses the canonical GitHubProfileSchema from @happy/protocol and wraps it
  * with OpenAPI metadata for API documentation.
  *
  * Note: We cast to add openapi() method since @hono/zod-openapi extends Zod
+ * @internal Used for composing account profile schema
  */
-export const GitHubProfileSchema = (CanonicalGitHubProfileSchema as z.ZodTypeAny)
+const GitHubProfileSchema = (CanonicalGitHubProfileSchema as z.ZodTypeAny)
     .openapi('GitHubProfile');
 
 /**
  * Schema for user account profile returned in API responses
+ * @internal Used for composing response schemas
  */
-export const AccountProfileSchema = z
+const AccountProfileSchema = z
     .object({
         id: z.string().openapi({
             description: 'Unique account identifier',

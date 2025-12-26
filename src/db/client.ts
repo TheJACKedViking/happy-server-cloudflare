@@ -8,15 +8,6 @@ import { drizzle } from 'drizzle-orm/d1';
 import { schema } from '@/db/schema';
 
 /**
- * Environment bindings interface
- * Extend this as more bindings are added
- */
-export interface Env {
-    DB: D1Database;
-    [key: string]: unknown;
-}
-
-/**
  * Create a typed Drizzle database client from D1 instance
  *
  * @param d1 - Cloudflare D1 database instance from environment bindings

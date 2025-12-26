@@ -7,7 +7,6 @@
  * @module durable-objects/handlers.spec
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { describe, it, expect, vi } from 'vitest';
 import type { HandlerContext } from './handlers';
 import {
@@ -152,15 +151,6 @@ function createContext(overrides: Partial<HandlerContext> = {}): HandlerContext 
         ...overrides,
     };
 }
-
-/**
- * Helper type to access response properties in tests
- */
-type _TestResult = {
-    response?: Record<string, any>;
-    broadcast?: Record<string, any>;
-    ephemeral?: Record<string, any>;
-};
 
 // =============================================================================
 // SESSION HANDLER TESTS

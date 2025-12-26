@@ -14,8 +14,9 @@ import { z } from '@hono/zod-openapi';
 
 /**
  * Schema for session object returned in API responses
+ * @internal Used for composing response schemas
  */
-export const SessionSchema = z
+const SessionSchema = z
     .object({
         id: z.string().openapi({
             description: 'Unique session identifier',
@@ -70,8 +71,9 @@ export const SessionSchema = z
 
 /**
  * Schema for session message object
+ * @internal Used for composing response schemas
  */
-export const SessionMessageSchema = z
+const SessionMessageSchema = z
     .object({
         id: z.string().openapi({
             description: 'Unique message identifier',

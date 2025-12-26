@@ -14,8 +14,9 @@ import { z } from '@hono/zod-openapi';
 /**
  * Schema for feed item body content
  * The body is a JSON object that can contain various activity types
+ * @internal Used for composing response schemas
  */
-export const FeedBodySchema = z
+const FeedBodySchema = z
     .object({
         type: z.string().openapi({
             description: 'Type of feed activity',
@@ -27,8 +28,9 @@ export const FeedBodySchema = z
 
 /**
  * Schema for a single feed item
+ * @internal Used for composing response schemas
  */
-export const FeedItemSchema = z
+const FeedItemSchema = z
     .object({
         id: z.string().openapi({
             description: 'Unique feed item identifier',
