@@ -142,7 +142,7 @@ export const TerminalAuthResponseSchema = z
             .min(1)
             .openapi({
                 description: 'Base64-encoded public key of the terminal being approved',
-                example: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+                example: '3q2+7wQbKq9u3rXhOCvH5wPqVZ6ZkA4kZJ6gBRH5mO0=',
             }),
         response: z
             .string()
