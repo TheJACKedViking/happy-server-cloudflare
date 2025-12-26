@@ -2140,36 +2140,86 @@ Three client types supported (matching happy-server Socket.io):
 
 #### GET /v1/updates (or /v1/websocket)
 
-WebSocket upgrade endpoint. Authentication via query params or headers.
+WebSocket upgrade endpoint with multiple authentication methods.
+
+**Authentication Methods (HAP-360, HAP-375):**
+
+For security, auth tokens should NOT be passed in URL query strings. The server supports three auth methods:
+
+| Method | Client | Flow |
+|--------|--------|------|
+| **Ticket Auth** (recommended) | Mobile (happy-app) | POST `/v1/websocket/ticket` → connect with `?ticket=xxx` |
+| **Header Auth** | CLI (happy-cli) | Connect with `Authorization: Bearer <token>` header |
+| **Message Auth** (fallback) | Mobile | Connect without token → send auth message on open |
 
 **Query Parameters:**
 
-- `token` (required): Auth token from privacy-kit
+- `ticket`: Short-lived auth ticket (from POST `/v1/websocket/ticket`)
 - `clientType`: `user-scoped` | `session-scoped` | `machine-scoped` (default: user-scoped)
 - `sessionId`: Required for session-scoped connections
 - `machineId`: Required for machine-scoped connections
+- `correlationId`: Optional request tracing ID
 
-**Headers Alternative:**
+**Headers (for CLI/Node.js clients):**
 
 - `Authorization: Bearer <token>`
 - `X-Client-Type: <type>`
 - `X-Session-Id: <id>`
 - `X-Machine-Id: <id>`
 
-**Example (JavaScript client):**
+**Message Auth Flow (HAP-360):**
+
+If connecting without ticket or header auth, send auth message immediately after `onopen`:
 
 ```javascript
+ws.onopen = () => {
+    ws.send(JSON.stringify({
+        event: 'auth',
+        data: {
+            token: authToken,
+            clientType: 'user-scoped'
+        }
+    }));
+};
+```
+
+Server responds with `{ event: 'connected' }` on success or `{ event: 'auth-error' }` on failure.
+Connections that don't authenticate within 5 seconds are closed.
+
+**Example (Mobile client with ticket auth):**
+
+```javascript
+// Step 1: Fetch short-lived ticket
+const ticketRes = await fetch('/v1/websocket/ticket', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${token}` }
+});
+const { ticket } = await ticketRes.json();
+
+// Step 2: Connect with ticket (no long-lived token in URL)
 const ws = new WebSocket(
-    'wss://api.example.com/v1/updates?token=xxx&clientType=user-scoped'
+    `wss://api.example.com/v1/updates?ticket=${ticket}&clientType=user-scoped`
 );
 
-ws.onopen = () => console.log('Connected');
 ws.onmessage = (event) => {
     const msg = JSON.parse(event.data);
-    if (msg.type === 'connected') {
-        console.log('Connection ID:', msg.payload.connectionId);
+    if (msg.event === 'connected') {
+        console.log('Authenticated!');
     }
 };
+```
+
+**Example (CLI client with header auth):**
+
+```javascript
+// Node.js WebSocket supports headers
+const ws = new WebSocket('wss://api.example.com/v1/updates', {
+    headers: {
+        'Authorization': `Bearer ${token}`,
+        'X-Client-Type': 'machine-scoped',
+        'X-Machine-Id': machineId
+    }
+});
 ```
 
 #### GET /v1/websocket/stats (Protected)
