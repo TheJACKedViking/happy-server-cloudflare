@@ -51,18 +51,35 @@ vi.mock('@/lib/auth', () => ({
 }));
 
 import { app } from '@/index';
-import { authHeader, jsonBody, expectOneOfStatus } from './test-utils';
+import { authHeader, jsonBody, expectOneOfStatus, createMockR2, createMockDurableObjectNamespace } from './test-utils';
+
+/**
+ * Create mock environment for Hono app.request()
+ */
+function createTestEnv() {
+    return {
+        ENVIRONMENT: 'development' as const,
+        HAPPY_MASTER_SECRET: 'test-secret-for-vitest-tests-min-32-chars',
+        DB: {} as D1Database,
+        UPLOADS: createMockR2(),
+        CONNECTION_MANAGER: createMockDurableObjectNamespace(),
+    };
+}
+
+// Shared test environment
+let testEnv: ReturnType<typeof createTestEnv>;
 
 describe('Connect Routes', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        testEnv = createTestEnv();
     });
 
     describe('GET /v1/connect/github/params - GitHub OAuth Params', () => {
         it('should require authentication', async () => {
             const res = await app.request('/v1/connect/github/params', {
                 method: 'GET',
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -71,7 +88,7 @@ describe('Connect Routes', () => {
             const res = await app.request('/v1/connect/github/params', {
                 method: 'GET',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             // Use expectOk to ensure we get a successful response
             const body = await expectOneOfStatus<{ url: string }>(res, [200], [500]);
@@ -85,7 +102,7 @@ describe('Connect Routes', () => {
         it('should handle OAuth callback with code', async () => {
             const res = await app.request('/v1/connect/github/callback?code=test-code&state=test-state', {
                 method: 'GET',
-            });
+            }, testEnv);
 
             // May redirect or return error based on state validation
             expect([200, 302, 400, 401, 500]).toContain(res.status);
@@ -94,7 +111,7 @@ describe('Connect Routes', () => {
         it('should reject callback without code', async () => {
             const res = await app.request('/v1/connect/github/callback?state=test-state', {
                 method: 'GET',
-            });
+            }, testEnv);
 
             expect([400, 500]).toContain(res.status);
         });
@@ -102,7 +119,7 @@ describe('Connect Routes', () => {
         it('should reject callback without state', async () => {
             const res = await app.request('/v1/connect/github/callback?code=test-code', {
                 method: 'GET',
-            });
+            }, testEnv);
 
             expect([400, 500]).toContain(res.status);
         });
@@ -121,7 +138,7 @@ describe('Connect Routes', () => {
                     action: 'push',
                     repository: { full_name: 'test/repo' },
                 }),
-            });
+            }, testEnv);
 
             // May succeed or fail based on signature verification
             expect([200, 401, 500]).toContain(res.status);
@@ -132,7 +149,7 @@ describe('Connect Routes', () => {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: jsonBody({ action: 'push' }),
-            });
+            }, testEnv);
 
             // 400 = validation error, 401 = auth error, 500 = runtime error
             expect([400, 401, 500]).toContain(res.status);
@@ -143,7 +160,7 @@ describe('Connect Routes', () => {
         it('should require authentication', async () => {
             const res = await app.request('/v1/connect/github', {
                 method: 'DELETE',
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -152,7 +169,7 @@ describe('Connect Routes', () => {
             const res = await app.request('/v1/connect/github', {
                 method: 'DELETE',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             // May return 200 (success), 404 (not connected), or 500 (DB error)
             const body = await expectOneOfStatus<{ success: boolean }>(res, [200], [404, 500]);
@@ -170,7 +187,7 @@ describe('Connect Routes', () => {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: jsonBody({ token: 'sk-test-token' }),
-                });
+                }, testEnv);
 
                 expect(res.status).toBe(401);
             }
@@ -182,11 +199,11 @@ describe('Connect Routes', () => {
                     method: 'POST',
                     headers: authHeader(),
                     body: jsonBody({ token: `sk-test-${vendor}-token` }),
-                });
+                }, testEnv);
 
                 // Use expectOk to ensure we get a successful response
                 const body = await expectOneOfStatus<{ success: boolean }>(res, [200], [500]);
-            if (!body) return;
+                if (!body) return;
                 expect(body.success).toBe(true);
             }
         });
@@ -196,7 +213,7 @@ describe('Connect Routes', () => {
                 method: 'POST',
                 headers: authHeader(),
                 body: jsonBody({}),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(400);
         });
@@ -206,7 +223,7 @@ describe('Connect Routes', () => {
                 method: 'POST',
                 headers: authHeader(),
                 body: jsonBody({ token: 'test-token' }),
-            });
+            }, testEnv);
 
             expect([400, 404, 500]).toContain(res.status);
         });
@@ -216,7 +233,7 @@ describe('Connect Routes', () => {
         it('should require authentication', async () => {
             const res = await app.request('/v1/connect/openai/token', {
                 method: 'GET',
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -225,7 +242,7 @@ describe('Connect Routes', () => {
             const res = await app.request('/v1/connect/openai/token', {
                 method: 'GET',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             // Use expectOk to ensure we get a successful response
             const body = await expectOneOfStatus<{ token: string | null }>(res, [200], [500]);
@@ -237,7 +254,7 @@ describe('Connect Routes', () => {
             const res = await app.request('/v1/connect/anthropic/token', {
                 method: 'GET',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             // Use expectOk to ensure we get a successful response
             const body = await expectOneOfStatus<{ token: string | null }>(res, [200], [500]);
@@ -251,7 +268,7 @@ describe('Connect Routes', () => {
         it('should require authentication', async () => {
             const res = await app.request('/v1/connect/openai', {
                 method: 'DELETE',
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -260,7 +277,7 @@ describe('Connect Routes', () => {
             const res = await app.request('/v1/connect/openai', {
                 method: 'DELETE',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             // May return 200 (success), 404 (not registered), or 500 (DB error)
             const body = await expectOneOfStatus<{ success: boolean }>(res, [200], [404, 500]);
@@ -273,7 +290,7 @@ describe('Connect Routes', () => {
         it('should require authentication', async () => {
             const res = await app.request('/v1/connect/tokens', {
                 method: 'GET',
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -282,7 +299,7 @@ describe('Connect Routes', () => {
             const res = await app.request('/v1/connect/tokens', {
                 method: 'GET',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             // Use expectOk to ensure we get a successful response
             const body = await expectOneOfStatus<{ tokens: { vendor: string; token: string }[] }>(res, [200], [500]);
@@ -296,6 +313,7 @@ describe('Connect Routes', () => {
 describe('Version Routes', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        testEnv = createTestEnv();
     });
 
     describe('POST /v1/version - Check App Version', () => {
@@ -308,7 +326,7 @@ describe('Version Routes', () => {
                     version: '1.0.0',
                     app_id: 'com.ex3ndr.happy',
                 }),
-            });
+            }, testEnv);
 
             // Use expectOk to ensure we get a successful response
             const body = await expectOneOfStatus<{ updateUrl: string | null }>(res, [200], [500]);
@@ -325,7 +343,7 @@ describe('Version Routes', () => {
                     version: '1.0.0',
                     app_id: 'com.ex3ndr.happy',
                 }),
-            });
+            }, testEnv);
 
             expect([200, 500]).toContain(res.status);
         });
@@ -337,7 +355,7 @@ describe('Version Routes', () => {
                 body: jsonBody({
                     version: '1.0.0',
                 }),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(400);
         });
@@ -349,7 +367,7 @@ describe('Version Routes', () => {
                 body: jsonBody({
                     platform: 'ios',
                 }),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(400);
         });
@@ -363,7 +381,7 @@ describe('Version Routes', () => {
                     version: '99.99.99', // Very high version
                     app_id: 'com.ex3ndr.happy',
                 }),
-            });
+            }, testEnv);
 
             // Use expectOk to ensure we get a successful response
             const body = await expectOneOfStatus<{ updateUrl: string | null }>(res, [200], [500]);
@@ -380,7 +398,7 @@ describe('Version Routes', () => {
                     version: '0.0.1', // Very old version
                     app_id: 'com.ex3ndr.happy',
                 }),
-            });
+            }, testEnv);
 
             // Use expectOk to ensure we get a successful response
             const body = await expectOneOfStatus<{ updateUrl: string | null }>(res, [200], [500]);
@@ -398,7 +416,7 @@ describe('Version Routes', () => {
                     version: '0.0.1', // Very old version
                     app_id: 'com.ex3ndr.happy',
                 }),
-            });
+            }, testEnv);
 
             const body = await expectOneOfStatus<{ updateUrl: string | null }>(res, [200], [500]);
             if (!body) return;
@@ -415,7 +433,7 @@ describe('Version Routes', () => {
                     version: '99.99.99', // Very high version
                     app_id: 'com.ex3ndr.happy',
                 }),
-            });
+            }, testEnv);
 
             const body = await expectOneOfStatus<{ updateUrl: string | null }>(res, [200], [500]);
             if (!body) return;
@@ -431,7 +449,7 @@ describe('Version Routes', () => {
                     version: '1.0.0',
                     app_id: 'com.ex3ndr.happy',
                 }),
-            });
+            }, testEnv);
 
             const body = await expectOneOfStatus<{ updateUrl: string | null }>(res, [200], [500]);
             if (!body) return;
@@ -444,6 +462,7 @@ describe('Version Routes', () => {
 describe('Voice Routes', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        testEnv = createTestEnv();
     });
 
     describe('POST /v1/voice/token - Get Voice Token', () => {
@@ -454,7 +473,7 @@ describe('Voice Routes', () => {
                 body: jsonBody({
                     agentId: 'agent-123',
                 }),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -467,7 +486,7 @@ describe('Voice Routes', () => {
                     agentId: 'agent-123',
                     revenueCatPublicKey: 'appl_test_key',
                 }),
-            });
+            }, testEnv);
 
             // Use expectOk to ensure we get a successful response
             const body = await expectOneOfStatus<{ allowed: boolean; token?: string; agentId: string }>(res, [200], [500]);
@@ -481,7 +500,7 @@ describe('Voice Routes', () => {
                 method: 'POST',
                 headers: authHeader(),
                 body: jsonBody({}),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(400);
         });
@@ -494,7 +513,7 @@ describe('Voice Routes', () => {
                     agentId: 'agent-123',
                     // No revenueCatPublicKey - may be denied
                 }),
-            });
+            }, testEnv);
 
             // Use expectOk to ensure we get a successful response
             const body = await expectOneOfStatus<{ allowed: boolean }>(res, [200], [500]);
@@ -511,7 +530,7 @@ describe('Voice Routes', () => {
                     agentId: 'agent-123',
                     revenueCatPublicKey: 'valid-subscription-key',
                 }),
-            });
+            }, testEnv);
 
             // Use expectOk to ensure we get a successful response
             const body = await expectOneOfStatus<{ allowed: boolean; token?: string }>(res, [200], [500]);

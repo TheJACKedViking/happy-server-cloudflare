@@ -41,24 +41,42 @@ vi.mock('@/lib/auth', () => ({
 }));
 
 import { app } from '@/index';
-import { authHeader, jsonBody, expectOneOfStatus } from './test-utils';
+import { authHeader, jsonBody, expectOneOfStatus, createMockR2, createMockDurableObjectNamespace } from './test-utils';
 import { createTicket } from '@/lib/ticket';
 
 /**
  * Test secret for ticket signing - matches the one used in test-utils.ts mock env
  */
-const TEST_SECRET = 'test-secret-for-vitest-tests';
+const TEST_SECRET = 'test-secret-for-vitest-tests-min-32-chars';
+
+/**
+ * Create mock environment for Hono app.request()
+ * Provides the HAPPY_MASTER_SECRET and other required bindings
+ */
+function createTestEnv() {
+    return {
+        ENVIRONMENT: 'development' as const,
+        HAPPY_MASTER_SECRET: 'test-secret-for-vitest-tests-min-32-chars',
+        DB: {} as D1Database,
+        UPLOADS: createMockR2(),
+        CONNECTION_MANAGER: createMockDurableObjectNamespace(),
+    };
+}
+
+// Shared test environment
+let testEnv: ReturnType<typeof createTestEnv>;
 
 describe('WebSocket Routes', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        testEnv = createTestEnv();
     });
 
     describe('GET /v1/updates - WebSocket Upgrade', () => {
         it('should reject non-WebSocket requests', async () => {
             const res = await app.request('/v1/updates?token=valid-token', {
                 method: 'GET',
-            });
+            }, testEnv);
 
             // Should reject without Upgrade header (may return text error, not JSON)
             expect([101, 400, 426, 500]).toContain(res.status);
@@ -71,7 +89,7 @@ describe('WebSocket Routes', () => {
                     Upgrade: 'websocket',
                     Connection: 'Upgrade',
                 },
-            });
+            }, testEnv);
 
             // May return text error, not JSON
             expect([400, 401, 500]).toContain(res.status);
@@ -84,7 +102,7 @@ describe('WebSocket Routes', () => {
                     Upgrade: 'websocket',
                     Connection: 'Upgrade',
                 },
-            });
+            }, testEnv);
 
             // WebSocket routes return plain text errors, not JSON
             // Accept both 401 (auth failed) and 500 (server config issue)
@@ -98,7 +116,7 @@ describe('WebSocket Routes', () => {
                     Upgrade: 'websocket',
                     Connection: 'Upgrade',
                 },
-            });
+            }, testEnv);
 
             // In test environment without real WebSocket support, may return various codes
             await expectOneOfStatus(res, [101, 200, 400], [500]);
@@ -111,7 +129,7 @@ describe('WebSocket Routes', () => {
                     Upgrade: 'websocket',
                     Connection: 'Upgrade',
                 },
-            });
+            }, testEnv);
 
             await expectOneOfStatus(res, [101, 200, 400], [500]);
         });
@@ -123,7 +141,7 @@ describe('WebSocket Routes', () => {
                     Upgrade: 'websocket',
                     Connection: 'Upgrade',
                 },
-            });
+            }, testEnv);
 
             // Should fail without sessionId
             await expectOneOfStatus(res, [400], [500]);
@@ -138,7 +156,8 @@ describe('WebSocket Routes', () => {
                         Upgrade: 'websocket',
                         Connection: 'Upgrade',
                     },
-                }
+                },
+                testEnv
             );
 
             await expectOneOfStatus(res, [101, 200, 400], [500]);
@@ -151,7 +170,7 @@ describe('WebSocket Routes', () => {
                     Upgrade: 'websocket',
                     Connection: 'Upgrade',
                 },
-            });
+            }, testEnv);
 
             // Should fail without machineId
             await expectOneOfStatus(res, [400], [500]);
@@ -166,7 +185,8 @@ describe('WebSocket Routes', () => {
                         Upgrade: 'websocket',
                         Connection: 'Upgrade',
                     },
-                }
+                },
+                testEnv
             );
 
             await expectOneOfStatus(res, [101, 200, 400], [500]);
@@ -180,7 +200,7 @@ describe('WebSocket Routes', () => {
                     Connection: 'Upgrade',
                     Authorization: 'Bearer valid-token',
                 },
-            });
+            }, testEnv);
 
             await expectOneOfStatus(res, [101, 200, 400], [500]);
         });
@@ -193,7 +213,7 @@ describe('WebSocket Routes', () => {
                     Connection: 'Upgrade',
                     'X-Client-Type': 'user-scoped',
                 },
-            });
+            }, testEnv);
 
             await expectOneOfStatus(res, [101, 200, 400], [500]);
         });
@@ -207,7 +227,7 @@ describe('WebSocket Routes', () => {
                     Upgrade: 'websocket',
                     Connection: 'Upgrade',
                 },
-            });
+            }, testEnv);
 
             await expectOneOfStatus(res, [101, 200, 400], [500]);
         });
@@ -217,7 +237,7 @@ describe('WebSocket Routes', () => {
         it('should require authentication', async () => {
             const res = await app.request('/v1/websocket/stats', {
                 method: 'GET',
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -226,7 +246,7 @@ describe('WebSocket Routes', () => {
             const res = await app.request('/v1/websocket/stats', {
                 method: 'GET',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             const body = await expectOneOfStatus<{
                 totalConnections: number;
@@ -240,14 +260,14 @@ describe('WebSocket Routes', () => {
                 expect(body).toHaveProperty('activeSessions');
                 expect(body).toHaveProperty('activeMachines');
                 expect(typeof body.totalConnections).toBe('number');
-            
+
         });
 
         it('should return byType breakdown', async () => {
             const res = await app.request('/v1/websocket/stats', {
                 method: 'GET',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             const body = await expectOneOfStatus<{
                 byType: {
@@ -260,7 +280,7 @@ describe('WebSocket Routes', () => {
                 expect(body.byType).toHaveProperty('user-scoped');
                 expect(body.byType).toHaveProperty('session-scoped');
                 expect(body.byType).toHaveProperty('machine-scoped');
-            
+
         });
     });
 
@@ -276,7 +296,7 @@ describe('WebSocket Routes', () => {
                         timestamp: Date.now(),
                     },
                 }),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -292,13 +312,13 @@ describe('WebSocket Routes', () => {
                         timestamp: Date.now(),
                     },
                 }),
-            });
+            }, testEnv);
 
             const body = await expectOneOfStatus<{ success: boolean; delivered: number }>(res, [200], [500]);
             if (!body) return;
                 expect(body).toHaveProperty('success');
                 expect(body).toHaveProperty('delivered');
-            
+
         });
 
         it('should require message field', async () => {
@@ -306,7 +326,7 @@ describe('WebSocket Routes', () => {
                 method: 'POST',
                 headers: authHeader(),
                 body: jsonBody({}),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(400);
         });
@@ -325,7 +345,7 @@ describe('WebSocket Routes', () => {
                         type: 'user-scoped-only',
                     },
                 }),
-            });
+            }, testEnv);
 
             await expectOneOfStatus(res, [200], [500]);
         });
@@ -345,7 +365,7 @@ describe('WebSocket Routes', () => {
                         sessionId: 'session-123',
                     },
                 }),
-            });
+            }, testEnv);
 
             await expectOneOfStatus(res, [200], [500]);
         });
@@ -365,7 +385,7 @@ describe('WebSocket Routes', () => {
                         machineId: 'machine-123',
                     },
                 }),
-            });
+            }, testEnv);
 
             await expectOneOfStatus(res, [200], [500]);
         });
@@ -385,7 +405,7 @@ describe('WebSocket Routes', () => {
                         connectionId: 'conn-to-exclude',
                     },
                 }),
-            });
+            }, testEnv);
 
             await expectOneOfStatus(res, [200], [500]);
         });
@@ -401,13 +421,13 @@ describe('WebSocket Routes', () => {
                         timestamp: Date.now(),
                     },
                 }),
-            });
+            }, testEnv);
 
             const body = await expectOneOfStatus<{ delivered: number }>(res, [200], [500]);
             if (!body) return;
                 expect(typeof body.delivered).toBe('number');
                 expect(body.delivered).toBeGreaterThanOrEqual(0);
-            
+
         });
     });
 
@@ -424,7 +444,7 @@ describe('WebSocket Routes', () => {
                         timestamp: Date.now(),
                     },
                 }),
-            });
+            }, testEnv);
 
             // Should succeed but deliver 0 messages (user 2 has no connections)
             await expectOneOfStatus(res, [200], [500]);
@@ -437,7 +457,7 @@ describe('WebSocket Routes', () => {
                     Upgrade: 'websocket',
                     Connection: 'Upgrade',
                 },
-            });
+            }, testEnv);
 
             await expectOneOfStatus(res, [400], [500]);
         });
@@ -448,7 +468,7 @@ describe('WebSocket Routes', () => {
             const res = await app.request('/v1/websocket/ticket', {
                 method: 'POST',
                 headers: authHeader('valid-token'),
-            });
+            }, testEnv);
 
             // In mock environment, HAPPY_MASTER_SECRET may be undefined causing 500
             const body = await expectOneOfStatus<{ ticket: string }>(res, [200], [500]);
@@ -462,7 +482,7 @@ describe('WebSocket Routes', () => {
         it('should reject request without auth', async () => {
             const res = await app.request('/v1/websocket/ticket', {
                 method: 'POST',
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -471,7 +491,7 @@ describe('WebSocket Routes', () => {
             const res = await app.request('/v1/websocket/ticket', {
                 method: 'POST',
                 headers: authHeader('invalid-token'),
-            });
+            }, testEnv);
 
             // Should be 401, but may be 500 if HAPPY_MASTER_SECRET unavailable
             await expectOneOfStatus(res, [401], [500]);
@@ -481,7 +501,7 @@ describe('WebSocket Routes', () => {
             const res = await app.request('/v1/websocket/ticket', {
                 method: 'POST',
                 headers: authHeader('valid-token'),
-            });
+            }, testEnv);
 
             // In mock environment, HAPPY_MASTER_SECRET may be undefined causing 500
             const body = await expectOneOfStatus<{ ticket: string }>(res, [200], [500]);
@@ -497,12 +517,12 @@ describe('WebSocket Routes', () => {
             const res1 = await app.request('/v1/websocket/ticket', {
                 method: 'POST',
                 headers: authHeader('valid-token'),
-            });
+            }, testEnv);
 
             const res2 = await app.request('/v1/websocket/ticket', {
                 method: 'POST',
                 headers: authHeader('valid-token'),
-            });
+            }, testEnv);
 
             // In mock environment, HAPPY_MASTER_SECRET may be undefined causing 500
             const body1 = await expectOneOfStatus<{ ticket: string }>(res1, [200], [500]);
@@ -521,7 +541,7 @@ describe('WebSocket Routes', () => {
             const ticketRes = await app.request('/v1/websocket/ticket', {
                 method: 'POST',
                 headers: authHeader('valid-token'),
-            });
+            }, testEnv);
 
             // In mock environment, HAPPY_MASTER_SECRET may be undefined
             const ticketBody = await expectOneOfStatus<{ ticket: string }>(ticketRes, [200], [500]);
@@ -534,7 +554,7 @@ describe('WebSocket Routes', () => {
                     Upgrade: 'websocket',
                     Connection: 'Upgrade',
                 },
-            });
+            }, testEnv);
 
             // In test environment without real WebSocket support, may return various codes:
             // - 101 = WebSocket upgrade successful
@@ -557,7 +577,7 @@ describe('WebSocket Routes', () => {
                     Upgrade: 'websocket',
                     Connection: 'Upgrade',
                 },
-            });
+            }, testEnv);
 
             // Should reject with 401, but may return 500 in mock env if HAPPY_MASTER_SECRET unavailable
             await expectOneOfStatus(wsRes, [401], [500]);
@@ -573,7 +593,7 @@ describe('WebSocket Routes', () => {
                     Upgrade: 'websocket',
                     Connection: 'Upgrade',
                 },
-            });
+            }, testEnv);
 
             // Should reject with 401, but may return 500 in mock env
             await expectOneOfStatus(wsRes, [401], [500]);
@@ -595,7 +615,7 @@ describe('WebSocket Routes', () => {
                         Upgrade: 'websocket',
                         Connection: 'Upgrade',
                     },
-                });
+                }, testEnv);
 
                 // Should reject with 401, but may return 500 in mock env
                 await expectOneOfStatus(wsRes, [401], [500]);
@@ -607,7 +627,7 @@ describe('WebSocket Routes', () => {
             const ticketRes = await app.request('/v1/websocket/ticket', {
                 method: 'POST',
                 headers: authHeader('valid-token'),
-            });
+            }, testEnv);
 
             // In mock environment, HAPPY_MASTER_SECRET may be undefined
             const ticketBody = await expectOneOfStatus<{ ticket: string }>(ticketRes, [200], [500]);
@@ -620,7 +640,7 @@ describe('WebSocket Routes', () => {
                     Upgrade: 'websocket',
                     Connection: 'Upgrade',
                 },
-            });
+            }, testEnv);
 
             await expectOneOfStatus(wsRes, [101, 200, 400], [500]);
         });
@@ -630,7 +650,7 @@ describe('WebSocket Routes', () => {
             const ticketRes = await app.request('/v1/websocket/ticket', {
                 method: 'POST',
                 headers: authHeader('valid-token'),
-            });
+            }, testEnv);
 
             // In mock environment, HAPPY_MASTER_SECRET may be undefined
             const ticketBody = await expectOneOfStatus<{ ticket: string }>(ticketRes, [200], [500]);
@@ -645,7 +665,8 @@ describe('WebSocket Routes', () => {
                         Upgrade: 'websocket',
                         Connection: 'Upgrade',
                     },
-                }
+                },
+                testEnv
             );
 
             // Should succeed because valid ticket takes precedence over invalid token
@@ -660,7 +681,7 @@ describe('WebSocket Routes', () => {
             const res = await app.request('/v1/websocket/ticket', {
                 method: 'POST',
                 headers: authHeader('valid-token'),
-            });
+            }, testEnv);
 
             // In mock environment, may return 500 if HAPPY_MASTER_SECRET unavailable
             // or 200 if rate limit KV not configured (passes through)
@@ -678,7 +699,7 @@ describe('WebSocket Routes', () => {
                 const res = await app.request('/v1/websocket/ticket', {
                     method: 'POST',
                     headers: authHeader('valid-token'),
-                });
+                }, testEnv);
                 responses.push(res);
             }
 
@@ -713,7 +734,7 @@ describe('WebSocket Routes', () => {
                 const res = await app.request('/v1/websocket/ticket', {
                     method: 'POST',
                     headers: authHeader('valid-token'), // test-user-123
-                });
+                }, testEnv);
                 user1Responses.push(res);
             }
 
@@ -721,7 +742,7 @@ describe('WebSocket Routes', () => {
             const user2Res = await app.request('/v1/websocket/ticket', {
                 method: 'POST',
                 headers: authHeader('user2-token'), // test-user-456
-            });
+            }, testEnv);
 
             // User 2's first request should succeed (200) or fail for other reasons (500)
             // but NOT be rate limited (429) due to user 1's requests
@@ -737,7 +758,7 @@ describe('WebSocket Routes', () => {
                 const res = await app.request('/v1/websocket/ticket', {
                     method: 'POST',
                     headers: authHeader('valid-token'),
-                });
+                }, testEnv);
                 responses.push(res);
             }
 

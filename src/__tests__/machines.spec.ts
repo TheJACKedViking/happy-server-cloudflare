@@ -41,11 +41,24 @@ vi.mock('@/lib/auth', () => ({
 }));
 
 import { app } from '@/index';
-import { authHeader, jsonBody, expectOneOfStatus, VALID_TOKEN } from './test-utils';
+import { authHeader, jsonBody, expectOneOfStatus, VALID_TOKEN, createMockR2, createMockDurableObjectNamespace } from './test-utils';
+
+function createTestEnv() {
+    return {
+        ENVIRONMENT: 'development' as const,
+        HAPPY_MASTER_SECRET: 'test-secret-for-vitest-tests-min-32-chars',
+        DB: {} as D1Database,
+        UPLOADS: createMockR2(),
+        CONNECTION_MANAGER: createMockDurableObjectNamespace(),
+    };
+}
+
+let testEnv: ReturnType<typeof createTestEnv>;
 
 describe('Machine Routes', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        testEnv = createTestEnv();
     });
 
     describe('POST /v1/machines - Register Machine', () => {
@@ -57,7 +70,7 @@ describe('Machine Routes', () => {
                     id: 'machine-123',
                     metadata: '{"hostname":"test"}',
                 }),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -73,7 +86,7 @@ describe('Machine Routes', () => {
                     daemonState: '{"running":true}',
                     dataEncryptionKey: 'base64-encoded-key',
                 }),
-            });
+            }, testEnv);
 
             // Accept 200 success or 500 DB error
             const body = await expectOneOfStatus<{ machine: { id: string } }>(res, [200], [500]);
@@ -89,7 +102,7 @@ describe('Machine Routes', () => {
                 body: jsonBody({
                     metadata: '{"hostname":"test"}',
                 }),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(400);
         });
@@ -101,7 +114,7 @@ describe('Machine Routes', () => {
                 body: jsonBody({
                     id: 'machine-123',
                 }),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(400);
         });
@@ -117,7 +130,7 @@ describe('Machine Routes', () => {
                     id: machineId,
                     metadata: '{"hostname":"first"}',
                 }),
-            });
+            }, testEnv);
 
             // Second registration with same ID
             const res2 = await app.request('/v1/machines', {
@@ -127,7 +140,7 @@ describe('Machine Routes', () => {
                     id: machineId,
                     metadata: '{"hostname":"second"}',
                 }),
-            });
+            }, testEnv);
 
             // Both should succeed or consistently fail
             expect([200, 201, 500]).toContain(res1.status);
@@ -139,7 +152,7 @@ describe('Machine Routes', () => {
         it('should require authentication', async () => {
             const res = await app.request('/v1/machines', {
                 method: 'GET',
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -148,7 +161,7 @@ describe('Machine Routes', () => {
             const res = await app.request('/v1/machines', {
                 method: 'GET',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             // Accept 200 success or 500 DB error
             const body = await expectOneOfStatus<{ machines: unknown[] }>(res, [200], [500]);
@@ -161,7 +174,7 @@ describe('Machine Routes', () => {
             const res = await app.request('/v1/machines?limit=10', {
                 method: 'GET',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             expect([200, 500]).toContain(res.status);
         });
@@ -170,7 +183,7 @@ describe('Machine Routes', () => {
             const res = await app.request('/v1/machines?activeOnly=true', {
                 method: 'GET',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             expect([200, 500]).toContain(res.status);
         });
@@ -179,7 +192,7 @@ describe('Machine Routes', () => {
             const res = await app.request('/v1/machines?activeOnly=true', {
                 method: 'GET',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             // Accept 200 success or 500 DB error
             const body = await expectOneOfStatus<{ machines: { active: boolean }[] }>(res, [200], [500]);
@@ -195,7 +208,7 @@ describe('Machine Routes', () => {
         it('should require authentication', async () => {
             const res = await app.request('/v1/machines/test-machine-id', {
                 method: 'GET',
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -204,7 +217,7 @@ describe('Machine Routes', () => {
             const res = await app.request('/v1/machines/non-existent-machine-id', {
                 method: 'GET',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             expect([404, 500]).toContain(res.status);
         });
@@ -213,7 +226,7 @@ describe('Machine Routes', () => {
             const res = await app.request('/v1/machines/valid-machine-id', {
                 method: 'GET',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             // May return 200 (found), 404 (not found), or 500 (DB error)
             const body = await expectOneOfStatus<{ machine: { id: string } }>(res, [200], [404, 500]);
@@ -230,7 +243,7 @@ describe('Machine Routes', () => {
                 body: jsonBody({
                     active: true,
                 }),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -242,7 +255,7 @@ describe('Machine Routes', () => {
                 body: jsonBody({
                     active: true,
                 }),
-            });
+            }, testEnv);
 
             expect([200, 404, 500]).toContain(res.status);
         });
@@ -255,7 +268,7 @@ describe('Machine Routes', () => {
                     active: true,
                     metadata: '{"hostname":"updated-hostname"}',
                 }),
-            });
+            }, testEnv);
 
             expect([200, 404, 500]).toContain(res.status);
         });
@@ -267,7 +280,7 @@ describe('Machine Routes', () => {
                 body: jsonBody({
                     daemonState: '{"running":true,"pid":12345}',
                 }),
-            });
+            }, testEnv);
 
             expect([200, 404, 500]).toContain(res.status);
         });
@@ -279,7 +292,7 @@ describe('Machine Routes', () => {
                 body: jsonBody({
                     active: true,
                 }),
-            });
+            }, testEnv);
 
             expect([404, 500]).toContain(res.status);
         });
@@ -289,7 +302,7 @@ describe('Machine Routes', () => {
                 method: 'PUT',
                 headers: authHeader(),
                 body: '{}',
-            });
+            }, testEnv);
 
             // May accept empty body (partial update) or reject
             expect([200, 400, 404, 500]).toContain(res.status);
@@ -307,7 +320,7 @@ describe('Machine Routes', () => {
                     id: machineId,
                     metadata: '{"hostname":"private"}',
                 }),
-            });
+            }, testEnv);
 
             // Accept 200 success or 500 DB error
             const createBody = await expectOneOfStatus<{ machine: { id: string } }>(createRes, [200], [500]);
@@ -318,7 +331,7 @@ describe('Machine Routes', () => {
             const accessRes = await app.request(`/v1/machines/${machineId}`, {
                 method: 'GET',
                 headers: authHeader('user2-token'),
-            });
+            }, testEnv);
 
             // Should be 404 (not found for this user) or 403 (forbidden)
             expect([403, 404, 500]).toContain(accessRes.status);
@@ -334,7 +347,7 @@ describe('Machine Routes', () => {
                 body: jsonBody({
                     active: true,
                 }),
-            });
+            }, testEnv);
 
             expect([403, 404, 500]).toContain(res.status);
         });

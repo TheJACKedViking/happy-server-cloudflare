@@ -40,18 +40,35 @@ vi.mock('@/lib/auth', () => ({
 }));
 
 import { app } from '@/index';
-import { authHeader, VALID_TOKEN, INVALID_TOKEN } from './test-utils';
+import { authHeader, VALID_TOKEN, INVALID_TOKEN, createMockR2, createMockDurableObjectNamespace } from './test-utils';
+
+/**
+ * Create mock environment for Hono app.request()
+ */
+function createTestEnv() {
+    return {
+        ENVIRONMENT: 'development' as const,
+        HAPPY_MASTER_SECRET: 'test-secret-for-vitest-tests-min-32-chars',
+        DB: {} as D1Database,
+        UPLOADS: createMockR2(),
+        CONNECTION_MANAGER: createMockDurableObjectNamespace(),
+    };
+}
+
+// Shared test environment
+let testEnv: ReturnType<typeof createTestEnv>;
 
 describe('Upload Routes', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        testEnv = createTestEnv();
     });
 
     describe('GET /v1/uploads - List Files', () => {
         it('should require authentication', async () => {
             const res = await app.request('/v1/uploads', {
                 method: 'GET',
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -62,7 +79,7 @@ describe('Upload Routes', () => {
                 headers: new Headers({
                     Authorization: `Bearer ${INVALID_TOKEN}`,
                 }),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -71,7 +88,7 @@ describe('Upload Routes', () => {
             const res = await app.request('/v1/uploads', {
                 method: 'GET',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             // May return 200 or 500 based on DB availability
             expect([200, 500]).toContain(res.status);
@@ -81,7 +98,7 @@ describe('Upload Routes', () => {
             const res = await app.request('/v1/uploads?category=avatars', {
                 method: 'GET',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             expect([200, 500]).toContain(res.status);
         });
@@ -90,7 +107,7 @@ describe('Upload Routes', () => {
             const res = await app.request('/v1/uploads?limit=10', {
                 method: 'GET',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             expect([200, 500]).toContain(res.status);
         });
@@ -99,7 +116,7 @@ describe('Upload Routes', () => {
             const res = await app.request('/v1/uploads?cursor=test-cursor', {
                 method: 'GET',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             expect([200, 500]).toContain(res.status);
         });
@@ -108,7 +125,7 @@ describe('Upload Routes', () => {
             const res = await app.request('/v1/uploads?limit=-1', {
                 method: 'GET',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             expect([400, 500]).toContain(res.status);
         });
@@ -123,7 +140,7 @@ describe('Upload Routes', () => {
             const res = await app.request('/v1/uploads', {
                 method: 'POST',
                 body: formData,
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -139,7 +156,7 @@ describe('Upload Routes', () => {
                     Authorization: `Bearer ${INVALID_TOKEN}`,
                 }),
                 body: formData,
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -153,7 +170,7 @@ describe('Upload Routes', () => {
                     Authorization: `Bearer ${VALID_TOKEN}`,
                 }),
                 body: formData,
-            });
+            }, testEnv);
 
             // Should return 400 for missing file or 500 for DB error
             expect([400, 500]).toContain(res.status);
@@ -173,7 +190,7 @@ describe('Upload Routes', () => {
                     Authorization: `Bearer ${VALID_TOKEN}`,
                 }),
                 body: formData,
-            });
+            }, testEnv);
 
             // May succeed or fail based on R2/DB availability
             expect([200, 400, 500]).toContain(res.status);
@@ -191,7 +208,7 @@ describe('Upload Routes', () => {
                     Authorization: `Bearer ${VALID_TOKEN}`,
                 }),
                 body: formData,
-            });
+            }, testEnv);
 
             expect([200, 400, 500]).toContain(res.status);
         });
@@ -208,7 +225,7 @@ describe('Upload Routes', () => {
                     Authorization: `Bearer ${VALID_TOKEN}`,
                 }),
                 body: formData,
-            });
+            }, testEnv);
 
             expect([200, 400, 500]).toContain(res.status);
         });
@@ -228,7 +245,7 @@ describe('Upload Routes', () => {
                     Authorization: `Bearer ${VALID_TOKEN}`,
                 }),
                 body: formData,
-            });
+            }, testEnv);
 
             expect([200, 400, 500]).toContain(res.status);
         });
@@ -247,7 +264,7 @@ describe('Upload Routes', () => {
                     Authorization: `Bearer ${VALID_TOKEN}`,
                 }),
                 body: formData,
-            });
+            }, testEnv);
 
             expect([200, 400, 500]).toContain(res.status);
         });
@@ -257,7 +274,7 @@ describe('Upload Routes', () => {
         it('should require authentication', async () => {
             const res = await app.request('/v1/uploads/test-file-id', {
                 method: 'GET',
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -268,7 +285,7 @@ describe('Upload Routes', () => {
                 headers: new Headers({
                     Authorization: `Bearer ${INVALID_TOKEN}`,
                 }),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -277,7 +294,7 @@ describe('Upload Routes', () => {
             const res = await app.request('/v1/uploads/non-existent-file', {
                 method: 'GET',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             // Should return 404 or 500 based on DB availability
             expect([404, 500]).toContain(res.status);
@@ -287,7 +304,7 @@ describe('Upload Routes', () => {
             const res = await app.request('/v1/uploads/test-file-123', {
                 method: 'GET',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             // File doesn't exist, should return 404 or 500
             expect([404, 500]).toContain(res.status);
@@ -298,7 +315,7 @@ describe('Upload Routes', () => {
         it('should require authentication', async () => {
             const res = await app.request('/v1/uploads/test-file-id/download', {
                 method: 'GET',
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -309,7 +326,7 @@ describe('Upload Routes', () => {
                 headers: new Headers({
                     Authorization: `Bearer ${INVALID_TOKEN}`,
                 }),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -318,7 +335,7 @@ describe('Upload Routes', () => {
             const res = await app.request('/v1/uploads/non-existent-file/download', {
                 method: 'GET',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             expect([404, 500]).toContain(res.status);
         });
@@ -328,7 +345,7 @@ describe('Upload Routes', () => {
         it('should require authentication', async () => {
             const res = await app.request('/v1/uploads/test-file-id', {
                 method: 'DELETE',
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -339,7 +356,7 @@ describe('Upload Routes', () => {
                 headers: new Headers({
                     Authorization: `Bearer ${INVALID_TOKEN}`,
                 }),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -348,7 +365,7 @@ describe('Upload Routes', () => {
             const res = await app.request('/v1/uploads/non-existent-file', {
                 method: 'DELETE',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             expect([404, 500]).toContain(res.status);
         });
@@ -357,7 +374,7 @@ describe('Upload Routes', () => {
             const res = await app.request('/v1/uploads/test-file-123', {
                 method: 'DELETE',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             // File doesn't exist, should return 404 or 500
             expect([404, 500]).toContain(res.status);
@@ -375,7 +392,7 @@ describe('Upload Routes', () => {
             const res = await app.request('/v1/uploads/avatar', {
                 method: 'POST',
                 body: formData,
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -393,7 +410,7 @@ describe('Upload Routes', () => {
                     Authorization: `Bearer ${INVALID_TOKEN}`,
                 }),
                 body: formData,
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -407,7 +424,7 @@ describe('Upload Routes', () => {
                     Authorization: `Bearer ${VALID_TOKEN}`,
                 }),
                 body: formData,
-            });
+            }, testEnv);
 
             expect([400, 500]).toContain(res.status);
         });
@@ -423,7 +440,7 @@ describe('Upload Routes', () => {
                     Authorization: `Bearer ${VALID_TOKEN}`,
                 }),
                 body: formData,
-            });
+            }, testEnv);
 
             // Should reject with 400 (unsupported type) or 500 (server error)
             expect([400, 500]).toContain(res.status);
@@ -442,7 +459,7 @@ describe('Upload Routes', () => {
                     Authorization: `Bearer ${VALID_TOKEN}`,
                 }),
                 body: formData,
-            });
+            }, testEnv);
 
             // May succeed or fail based on R2/DB availability
             expect([200, 400, 500]).toContain(res.status);
@@ -463,7 +480,7 @@ describe('Upload Routes', () => {
                     Authorization: `Bearer ${VALID_TOKEN}`,
                 }),
                 body: formData,
-            });
+            }, testEnv);
 
             expect([200, 400, 500]).toContain(res.status);
         });
@@ -481,7 +498,7 @@ describe('Upload Routes', () => {
                     Authorization: `Bearer ${VALID_TOKEN}`,
                 }),
                 body: formData,
-            });
+            }, testEnv);
 
             expect([200, 400, 500]).toContain(res.status);
         });
@@ -501,7 +518,7 @@ describe('Upload Routes', () => {
                     Authorization: `Bearer ${VALID_TOKEN}`,
                 }),
                 body: formData,
-            });
+            }, testEnv);
 
             expect([200, 400, 500]).toContain(res.status);
         });

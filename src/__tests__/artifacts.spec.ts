@@ -42,18 +42,31 @@ vi.mock('@/lib/auth', () => ({
 }));
 
 import { app } from '@/index';
-import { authHeader, jsonBody, expectOneOfStatus, VALID_TOKEN } from './test-utils';
+import { authHeader, jsonBody, expectOneOfStatus, VALID_TOKEN, createMockR2, createMockDurableObjectNamespace } from './test-utils';
+
+function createTestEnv() {
+    return {
+        ENVIRONMENT: 'development' as const,
+        HAPPY_MASTER_SECRET: 'test-secret-for-vitest-tests-min-32-chars',
+        DB: {} as D1Database,
+        UPLOADS: createMockR2(),
+        CONNECTION_MANAGER: createMockDurableObjectNamespace(),
+    };
+}
+
+let testEnv: ReturnType<typeof createTestEnv>;
 
 describe('Artifact Routes', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        testEnv = createTestEnv();
     });
 
     describe('GET /v1/artifacts - List Artifacts', () => {
         it('should require authentication', async () => {
             const res = await app.request('/v1/artifacts', {
                 method: 'GET',
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -62,7 +75,7 @@ describe('Artifact Routes', () => {
             const res = await app.request('/v1/artifacts', {
                 method: 'GET',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             // Accept 200 success or 500 DB error
             const body = await expectOneOfStatus<{ artifacts: unknown[] }>(res, [200], [500]);
@@ -75,7 +88,7 @@ describe('Artifact Routes', () => {
             const res = await app.request('/v1/artifacts', {
                 method: 'GET',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             // Accept 200 success or 500 DB error
             const body = await expectOneOfStatus<{ artifacts: { body?: unknown }[] }>(res, [200], [500]);
@@ -91,7 +104,7 @@ describe('Artifact Routes', () => {
         it('should require authentication', async () => {
             const res = await app.request('/v1/artifacts/test-artifact-id', {
                 method: 'GET',
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -100,7 +113,7 @@ describe('Artifact Routes', () => {
             const res = await app.request('/v1/artifacts/non-existent-artifact-id', {
                 method: 'GET',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             expect([404, 500]).toContain(res.status);
         });
@@ -109,7 +122,7 @@ describe('Artifact Routes', () => {
             const res = await app.request('/v1/artifacts/test-artifact-id', {
                 method: 'GET',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             // This endpoint may return 200, 404 (not found), or 500 (DB error)
             // We only verify body structure when we get a successful response
@@ -130,7 +143,7 @@ describe('Artifact Routes', () => {
                     header: 'base64-header',
                     body: 'base64-body',
                 }),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -146,7 +159,7 @@ describe('Artifact Routes', () => {
                     body: 'base64-encoded-body-data',
                     dataEncryptionKey: 'base64-encoded-key',
                 }),
-            });
+            }, testEnv);
 
             // This endpoint may return 200/201 (success), 400 (validation), or 500 (DB error)
             const body = await expectOneOfStatus<{ artifact: { id: string } }>(res, [200, 201], [400, 500]);
@@ -162,7 +175,7 @@ describe('Artifact Routes', () => {
                     header: 'base64-header',
                     body: 'base64-body',
                 }),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(400);
         });
@@ -175,7 +188,7 @@ describe('Artifact Routes', () => {
                     id: 'artifact-123',
                     body: 'base64-body',
                 }),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(400);
         });
@@ -188,7 +201,7 @@ describe('Artifact Routes', () => {
                     id: 'artifact-123',
                     header: 'base64-header',
                 }),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(400);
         });
@@ -206,7 +219,7 @@ describe('Artifact Routes', () => {
                     body: 'body-v1',
                     dataEncryptionKey: 'key',
                 }),
-            });
+            }, testEnv);
 
             // Second creation with same ID (should return existing)
             const res2 = await app.request('/v1/artifacts', {
@@ -218,7 +231,7 @@ describe('Artifact Routes', () => {
                     body: 'body-v2',
                     dataEncryptionKey: 'key',
                 }),
-            });
+            }, testEnv);
 
             expect([200, 201, 400, 500]).toContain(res1.status);
             expect([200, 201, 400, 409, 500]).toContain(res2.status);
@@ -237,7 +250,7 @@ describe('Artifact Routes', () => {
                     body: 'body',
                     dataEncryptionKey: 'key',
                 }),
-            });
+            }, testEnv);
 
             // Try to create same ID as user 2
             const res2 = await app.request('/v1/artifacts', {
@@ -249,7 +262,7 @@ describe('Artifact Routes', () => {
                     body: 'body',
                     dataEncryptionKey: 'key',
                 }),
-            });
+            }, testEnv);
 
             expect([400, 409, 500]).toContain(res2.status);
         });
@@ -263,7 +276,7 @@ describe('Artifact Routes', () => {
                 body: jsonBody({
                     header: 'new-header',
                 }),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -276,7 +289,7 @@ describe('Artifact Routes', () => {
                     header: 'new-base64-header',
                     expectedHeaderVersion: 1,
                 }),
-            });
+            }, testEnv);
 
             // May return 200 (success), 404 (not found), or 500 (DB error)
             const body = await expectOneOfStatus<{ success: boolean; headerVersion: number }>(res, [200], [404, 500]);
@@ -292,7 +305,7 @@ describe('Artifact Routes', () => {
                     body: 'new-base64-body',
                     expectedBodyVersion: 1,
                 }),
-            });
+            }, testEnv);
 
             expect([200, 404, 500]).toContain(res.status);
         });
@@ -307,7 +320,7 @@ describe('Artifact Routes', () => {
                     body: 'new-body',
                     expectedBodyVersion: 1,
                 }),
-            });
+            }, testEnv);
 
             expect([200, 404, 500]).toContain(res.status);
         });
@@ -320,7 +333,7 @@ describe('Artifact Routes', () => {
                     header: 'new-header',
                     expectedHeaderVersion: 999, // Wrong version
                 }),
-            });
+            }, testEnv);
 
             // May return 200 (with success or version-mismatch error), 404, or 500
             const body = await expectOneOfStatus<{ success: boolean; error?: string }>(res, [200], [404, 500]);
@@ -335,7 +348,7 @@ describe('Artifact Routes', () => {
                 body: jsonBody({
                     header: 'new-header',
                 }),
-            });
+            }, testEnv);
 
             expect([404, 500]).toContain(res.status);
         });
@@ -345,7 +358,7 @@ describe('Artifact Routes', () => {
         it('should require authentication', async () => {
             const res = await app.request('/v1/artifacts/test-artifact', {
                 method: 'DELETE',
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -354,7 +367,7 @@ describe('Artifact Routes', () => {
             const res = await app.request('/v1/artifacts/test-artifact-to-delete', {
                 method: 'DELETE',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             // May return 200 (success), 404 (not found), or 500 (DB error)
             const body = await expectOneOfStatus<{ success: boolean }>(res, [200], [404, 500]);
@@ -366,7 +379,7 @@ describe('Artifact Routes', () => {
             const res = await app.request('/v1/artifacts/non-existent-artifact', {
                 method: 'DELETE',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             expect([404, 500]).toContain(res.status);
         });
@@ -386,13 +399,13 @@ describe('Artifact Routes', () => {
                     body: 'private-body',
                     dataEncryptionKey: 'key',
                 }),
-            });
+            }, testEnv);
 
             // Try to access as user 2
             const accessRes = await app.request(`/v1/artifacts/${artifactId}`, {
                 method: 'GET',
                 headers: authHeader('user2-token'),
-            });
+            }, testEnv);
 
             expect([403, 404, 500]).toContain(accessRes.status);
         });
@@ -404,7 +417,7 @@ describe('Artifact Routes', () => {
                 body: jsonBody({
                     header: 'hacked-header',
                 }),
-            });
+            }, testEnv);
 
             expect([403, 404, 500]).toContain(res.status);
         });
@@ -413,7 +426,7 @@ describe('Artifact Routes', () => {
             const res = await app.request('/v1/artifacts/other-user-artifact', {
                 method: 'DELETE',
                 headers: authHeader('user2-token'),
-            });
+            }, testEnv);
 
             expect([403, 404, 500]).toContain(res.status);
         });

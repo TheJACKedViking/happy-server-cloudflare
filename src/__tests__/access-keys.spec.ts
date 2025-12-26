@@ -40,18 +40,31 @@ vi.mock('@/lib/auth', () => ({
 }));
 
 import { app } from '@/index';
-import { authHeader, jsonBody, expectOneOfStatus } from './test-utils';
+import { authHeader, jsonBody, expectOneOfStatus, createMockR2, createMockDurableObjectNamespace } from './test-utils';
+
+function createTestEnv() {
+    return {
+        ENVIRONMENT: 'development' as const,
+        HAPPY_MASTER_SECRET: 'test-secret-for-vitest-tests-min-32-chars',
+        DB: {} as D1Database,
+        UPLOADS: createMockR2(),
+        CONNECTION_MANAGER: createMockDurableObjectNamespace(),
+    };
+}
+
+let testEnv: ReturnType<typeof createTestEnv>;
 
 describe('Access Key Routes', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        testEnv = createTestEnv();
     });
 
     describe('GET /v1/access-keys/:sessionId/:machineId - Get Access Key', () => {
         it('should require authentication', async () => {
             const res = await app.request('/v1/access-keys/session-123/machine-456', {
                 method: 'GET',
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -60,7 +73,7 @@ describe('Access Key Routes', () => {
             const res = await app.request('/v1/access-keys/session-123/machine-456', {
                 method: 'GET',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             const body = await expectOneOfStatus<{ accessKey: unknown }>(res, [200], [500]);
             if (!body) return;
@@ -71,7 +84,7 @@ describe('Access Key Routes', () => {
             const res = await app.request('/v1/access-keys/non-existent/non-existent', {
                 method: 'GET',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             const body = await expectOneOfStatus<{ accessKey: unknown }>(res, [200], [500]);
             if (!body) return;
@@ -82,7 +95,7 @@ describe('Access Key Routes', () => {
             const res = await app.request('/v1/access-keys/valid-session/valid-machine', {
                 method: 'GET',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             await expectOneOfStatus(res, [200, 400], [500]);
         });
@@ -91,7 +104,7 @@ describe('Access Key Routes', () => {
             const res = await app.request('/v1/access-keys/session/machine', {
                 method: 'GET',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             await expectOneOfStatus(res, [200, 400], [500]);
         });
@@ -105,7 +118,7 @@ describe('Access Key Routes', () => {
                 body: jsonBody({
                     data: 'encrypted-access-data',
                 }),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -120,7 +133,7 @@ describe('Access Key Routes', () => {
                 body: jsonBody({
                     data: 'encrypted-access-key-data',
                 }),
-            });
+            }, testEnv);
 
             const body = await expectOneOfStatus<{ accessKey: { data: string } }>(res, [200, 201], [500]);
             if (!body) return;
@@ -132,7 +145,7 @@ describe('Access Key Routes', () => {
                 method: 'POST',
                 headers: authHeader(),
                 body: jsonBody({}),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(400);
         });
@@ -148,7 +161,7 @@ describe('Access Key Routes', () => {
                 body: jsonBody({
                     data: 'first-key',
                 }),
-            });
+            }, testEnv);
 
             // Try to create again
             const res = await app.request(`/v1/access-keys/${sessionId}/${machineId}`, {
@@ -157,7 +170,7 @@ describe('Access Key Routes', () => {
                 body: jsonBody({
                     data: 'second-key',
                 }),
-            });
+            }, testEnv);
 
             await expectOneOfStatus(res, [409], [500]);
         });
@@ -172,7 +185,7 @@ describe('Access Key Routes', () => {
                     data: 'new-encrypted-data',
                     expectedVersion: 1,
                 }),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -185,7 +198,7 @@ describe('Access Key Routes', () => {
                     data: 'updated-encrypted-data',
                     expectedVersion: 1,
                 }),
-            });
+            }, testEnv);
 
             const body = await expectOneOfStatus<{ success: boolean; version: number }>(res, [200], [404, 500]);
             if (!body) return;
@@ -200,7 +213,7 @@ describe('Access Key Routes', () => {
                 body: jsonBody({
                     expectedVersion: 1,
                 }),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(400);
         });
@@ -212,7 +225,7 @@ describe('Access Key Routes', () => {
                 body: jsonBody({
                     data: 'new-data',
                 }),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(400);
         });
@@ -225,7 +238,7 @@ describe('Access Key Routes', () => {
                     data: 'new-data',
                     expectedVersion: 1,
                 }),
-            });
+            }, testEnv);
 
             await expectOneOfStatus(res, [404], [500]);
         });
@@ -238,7 +251,7 @@ describe('Access Key Routes', () => {
                     data: 'new-data',
                     expectedVersion: 999, // Wrong version
                 }),
-            });
+            }, testEnv);
 
             const body = await expectOneOfStatus<{ success: boolean; error?: string }>(res, [200], [404, 500]);
             if (!body || body.success) return;
@@ -258,13 +271,13 @@ describe('Access Key Routes', () => {
                 body: jsonBody({
                     data: 'private-data',
                 }),
-            });
+            }, testEnv);
 
             // Try to access as user 2
             const res = await app.request(`/v1/access-keys/${sessionId}/${machineId}`, {
                 method: 'GET',
                 headers: authHeader('user2-token'),
-            });
+            }, testEnv);
 
             // Should either not find it or return null
             const body = await expectOneOfStatus<{ accessKey: unknown }>(res, [200], [500]);

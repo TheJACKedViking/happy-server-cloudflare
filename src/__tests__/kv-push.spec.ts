@@ -46,18 +46,35 @@ vi.mock('@/lib/auth', () => ({
 }));
 
 import { app } from '@/index';
-import { authHeader, jsonBody, expectOneOfStatus } from './test-utils';
+import { authHeader, jsonBody, expectOneOfStatus, createMockR2, createMockDurableObjectNamespace } from './test-utils';
+
+/**
+ * Create mock environment for Hono app.request()
+ */
+function createTestEnv() {
+    return {
+        ENVIRONMENT: 'development' as const,
+        HAPPY_MASTER_SECRET: 'test-secret-for-vitest-tests-min-32-chars',
+        DB: {} as D1Database,
+        UPLOADS: createMockR2(),
+        CONNECTION_MANAGER: createMockDurableObjectNamespace(),
+    };
+}
+
+// Shared test environment
+let testEnv: ReturnType<typeof createTestEnv>;
 
 describe('KV Routes', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        testEnv = createTestEnv();
     });
 
     describe('GET /v1/kv/:key - Get Single KV', () => {
         it('should require authentication', async () => {
             const res = await app.request('/v1/kv/test-key', {
                 method: 'GET',
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -66,21 +83,20 @@ describe('KV Routes', () => {
             const res = await app.request('/v1/kv/settings:theme', {
                 method: 'GET',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             const body = await expectOneOfStatus<{ key: string; value: string; version: number }>(res, [200], [404, 500]);
             if (!body) return;
-                expect(body).toHaveProperty('key');
-                expect(body).toHaveProperty('value');
-                expect(body).toHaveProperty('version');
-            
+            expect(body).toHaveProperty('key');
+            expect(body).toHaveProperty('value');
+            expect(body).toHaveProperty('version');
         });
 
         it('should return 404 for non-existent key', async () => {
             const res = await app.request('/v1/kv/non-existent-key', {
                 method: 'GET',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             await expectOneOfStatus(res, [404], [500]);
         });
@@ -89,7 +105,7 @@ describe('KV Routes', () => {
             const res = await app.request('/v1/kv/namespace:key:subkey', {
                 method: 'GET',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             await expectOneOfStatus(res, [200, 404], [500]);
         });
@@ -99,7 +115,7 @@ describe('KV Routes', () => {
         it('should require authentication', async () => {
             const res = await app.request('/v1/kv', {
                 method: 'GET',
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -108,20 +124,19 @@ describe('KV Routes', () => {
             const res = await app.request('/v1/kv', {
                 method: 'GET',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             const body = await expectOneOfStatus<{ items: unknown[] }>(res, [200], [500]);
             if (!body) return;
-                expect(body).toHaveProperty('items');
-                expect(Array.isArray(body.items)).toBe(true);
-            
+            expect(body).toHaveProperty('items');
+            expect(Array.isArray(body.items)).toBe(true);
         });
 
         it('should accept prefix filter', async () => {
             const res = await app.request('/v1/kv?prefix=settings:', {
                 method: 'GET',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             await expectOneOfStatus(res, [200], [500]);
         });
@@ -130,7 +145,7 @@ describe('KV Routes', () => {
             const res = await app.request('/v1/kv?limit=50', {
                 method: 'GET',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             await expectOneOfStatus(res, [200], [500]);
         });
@@ -139,7 +154,7 @@ describe('KV Routes', () => {
             const res = await app.request('/v1/kv?limit=2000', {
                 method: 'GET',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             // Max limit is 1000
             await expectOneOfStatus(res, [200, 400], [500]);
@@ -152,7 +167,7 @@ describe('KV Routes', () => {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: jsonBody({ keys: ['key1', 'key2'] }),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -164,13 +179,12 @@ describe('KV Routes', () => {
                 body: jsonBody({
                     keys: ['settings:theme', 'settings:notifications'],
                 }),
-            });
+            }, testEnv);
 
             const body = await expectOneOfStatus<{ values: unknown[] }>(res, [200], [500]);
             if (!body) return;
-                expect(body).toHaveProperty('values');
-                expect(Array.isArray(body.values)).toBe(true);
-            
+            expect(body).toHaveProperty('values');
+            expect(Array.isArray(body.values)).toBe(true);
         });
 
         it('should require keys array', async () => {
@@ -178,7 +192,7 @@ describe('KV Routes', () => {
                 method: 'POST',
                 headers: authHeader(),
                 body: jsonBody({}),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(400);
         });
@@ -188,7 +202,7 @@ describe('KV Routes', () => {
                 method: 'POST',
                 headers: authHeader(),
                 body: jsonBody({ keys: [] }),
-            });
+            }, testEnv);
 
             await expectOneOfStatus(res, [200, 400], [500]);
         });
@@ -202,7 +216,7 @@ describe('KV Routes', () => {
                 body: jsonBody({
                     mutations: [{ key: 'test', value: 'value', version: -1 }],
                 }),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -215,12 +229,11 @@ describe('KV Routes', () => {
                 body: jsonBody({
                     mutations: [{ key, value: 'base64-encoded-value', version: -1 }],
                 }),
-            });
+            }, testEnv);
 
             const body = await expectOneOfStatus<{ success: boolean; results: unknown[] }>(res, [200], [500]);
             if (!body) return;
-                expect(body.success).toBe(true);
-            
+            expect(body.success).toBe(true);
         });
 
         it('should update existing KV entry', async () => {
@@ -230,7 +243,7 @@ describe('KV Routes', () => {
                 body: jsonBody({
                     mutations: [{ key: 'existing-key', value: 'new-value', version: 1 }],
                 }),
-            });
+            }, testEnv);
 
             await expectOneOfStatus(res, [200], [500]);
         });
@@ -242,7 +255,7 @@ describe('KV Routes', () => {
                 body: jsonBody({
                     mutations: [{ key: 'key-to-delete', value: null, version: 1 }],
                 }),
-            });
+            }, testEnv);
 
             await expectOneOfStatus(res, [200], [500]);
         });
@@ -258,7 +271,7 @@ describe('KV Routes', () => {
                         { key: 'multi-3', value: 'value3', version: -1 },
                     ],
                 }),
-            });
+            }, testEnv);
 
             await expectOneOfStatus(res, [200], [500]);
         });
@@ -268,7 +281,7 @@ describe('KV Routes', () => {
                 method: 'POST',
                 headers: authHeader(),
                 body: jsonBody({}),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(400);
         });
@@ -280,7 +293,7 @@ describe('KV Routes', () => {
                 body: jsonBody({
                     mutations: [{ key: 'existing-key', value: 'new-value', version: 999 }],
                 }),
-            });
+            }, testEnv);
 
             const body = await expectOneOfStatus<{ success: boolean; errors?: unknown[] }>(res, [200, 409], [500]);
             if (!body || body.success) return;
@@ -292,6 +305,7 @@ describe('KV Routes', () => {
 describe('Push Routes', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        testEnv = createTestEnv();
     });
 
     describe('POST /v1/push-tokens - Register Push Token', () => {
@@ -300,7 +314,7 @@ describe('Push Routes', () => {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: jsonBody({ token: 'ExponentPushToken[xxx]' }),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -311,12 +325,11 @@ describe('Push Routes', () => {
                 method: 'POST',
                 headers: authHeader(),
                 body: jsonBody({ token }),
-            });
+            }, testEnv);
 
             const body = await expectOneOfStatus<{ success: boolean }>(res, [200, 201], [500]);
             if (!body) return;
-                expect(body.success).toBe(true);
-            
+            expect(body.success).toBe(true);
         });
 
         it('should require token field', async () => {
@@ -324,7 +337,7 @@ describe('Push Routes', () => {
                 method: 'POST',
                 headers: authHeader(),
                 body: jsonBody({}),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(400);
         });
@@ -337,14 +350,14 @@ describe('Push Routes', () => {
                 method: 'POST',
                 headers: authHeader(),
                 body: jsonBody({ token }),
-            });
+            }, testEnv);
 
             // Second registration (should update timestamp)
             const res2 = await app.request('/v1/push-tokens', {
                 method: 'POST',
                 headers: authHeader(),
                 body: jsonBody({ token }),
-            });
+            }, testEnv);
 
             await expectOneOfStatus(res1, [200, 201], [500]);
             await expectOneOfStatus(res2, [200, 201], [500]);
@@ -355,7 +368,7 @@ describe('Push Routes', () => {
         it('should require authentication', async () => {
             const res = await app.request('/v1/push-tokens/test-token', {
                 method: 'DELETE',
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -365,19 +378,18 @@ describe('Push Routes', () => {
             const res = await app.request(`/v1/push-tokens/${token}`, {
                 method: 'DELETE',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             const body = await expectOneOfStatus<{ success: boolean }>(res, [200], [404, 500]);
             if (!body) return;
-                expect(body.success).toBe(true);
-            
+            expect(body.success).toBe(true);
         });
 
         it('should return 404 for non-existent token', async () => {
             const res = await app.request('/v1/push-tokens/non-existent-token', {
                 method: 'DELETE',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             await expectOneOfStatus(res, [200, 404], [500]);
         });
@@ -387,7 +399,7 @@ describe('Push Routes', () => {
             const res = await app.request(`/v1/push-tokens/${token}`, {
                 method: 'DELETE',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             await expectOneOfStatus(res, [200, 404], [500]);
         });
@@ -397,7 +409,7 @@ describe('Push Routes', () => {
         it('should require authentication', async () => {
             const res = await app.request('/v1/push-tokens', {
                 method: 'GET',
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -406,31 +418,29 @@ describe('Push Routes', () => {
             const res = await app.request('/v1/push-tokens', {
                 method: 'GET',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             const body = await expectOneOfStatus<{ tokens: unknown[] }>(res, [200], [500]);
             if (!body) return;
-                expect(body).toHaveProperty('tokens');
-                expect(Array.isArray(body.tokens)).toBe(true);
-            
+            expect(body).toHaveProperty('tokens');
+            expect(Array.isArray(body.tokens)).toBe(true);
         });
 
         it('should return tokens with metadata', async () => {
             const res = await app.request('/v1/push-tokens', {
                 method: 'GET',
                 headers: authHeader(),
-            });
+            }, testEnv);
 
             const body = await expectOneOfStatus<{
                 tokens: { id: string; token: string; createdAt: number }[];
             }>(res, [200], [500]);
             if (!body) return;
-                body.tokens.forEach((token) => {
-                    expect(token).toHaveProperty('id');
-                    expect(token).toHaveProperty('token');
-                    expect(token).toHaveProperty('createdAt');
-                });
-            
+            body.tokens.forEach((token) => {
+                expect(token).toHaveProperty('id');
+                expect(token).toHaveProperty('token');
+                expect(token).toHaveProperty('createdAt');
+            });
         });
     });
 
@@ -439,7 +449,7 @@ describe('Push Routes', () => {
             const res = await app.request('/v1/push-tokens', {
                 method: 'GET',
                 headers: authHeader('user2-token'),
-            });
+            }, testEnv);
 
             await expectOneOfStatus(res, [200], [500]);
             // Should only return tokens for the authenticated user
@@ -450,7 +460,7 @@ describe('Push Routes', () => {
             const res = await app.request(`/v1/push-tokens/${token}`, {
                 method: 'DELETE',
                 headers: authHeader('user2-token'),
-            });
+            }, testEnv);
 
             // Should either not find it or refuse deletion
             await expectOneOfStatus(res, [200, 403, 404], [500]);
