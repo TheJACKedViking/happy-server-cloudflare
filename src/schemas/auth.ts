@@ -82,7 +82,7 @@ export const TerminalAuthRequestSchema = z
             }),
         supportsV2: z
             .boolean()
-            .nullish()
+            .optional()
             .openapi({
                 description: 'Whether the CLI supports V2 auth protocol',
                 example: true,
