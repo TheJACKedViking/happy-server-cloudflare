@@ -25,7 +25,7 @@ export const DirectAuthRequestSchema = z
             .min(1)
             .openapi({
                 description: 'Base64-encoded Ed25519 public key',
-                example: '3q2+7wQbKq9u3rXhOCvH5wPqVZ6ZkA4kZJ6gBRH5mO0=', // 32-byte raw key
+                example: '3q2+7wQbKq9u3rXhOCvH5wPqVZ6ZkA4kZJ6gBRH5mO0=', // 32-byte raw public key (before Base64 encoding)
             }),
         challenge: z
             .string()
