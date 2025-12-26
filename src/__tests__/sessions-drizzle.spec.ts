@@ -593,6 +593,228 @@ describe('Session Routes with Drizzle Mocking', () => {
         });
     });
 
+    // ========================================================================
+    // GET /v2/sessions/:id/messages - List Session Messages with Pagination
+    // ========================================================================
+
+    describe('GET /v2/sessions/:id/messages - Paginated Session Messages', () => {
+        it('should require authentication', async () => {
+            const res = await unauthRequest('/v2/sessions/session-123/messages', { method: 'GET' });
+            expect(res.status).toBe(401);
+        });
+
+        it('should return 404 for non-existent session', async () => {
+            const res = await authRequest('/v2/sessions/non-existent/messages', { method: 'GET' });
+            expect(res.status).toBe(404);
+
+            const body = await res.json() as { error: string };
+            expect(body.error).toBe('Session not found');
+        });
+
+        it('should return 404 for session owned by another user', async () => {
+            const otherSession = createTestSession(TEST_USER_ID_2, { id: 'other-user-session' });
+            drizzleMock.seedData('sessions', [otherSession]);
+
+            const res = await authRequest('/v2/sessions/other-user-session/messages', { method: 'GET' });
+            expect(res.status).toBe(404);
+        });
+
+        it('should return 400 for invalid cursor format', async () => {
+            const session = createTestSession(TEST_USER_ID, { id: 'cursor-test-session' });
+            drizzleMock.seedData('sessions', [session]);
+
+            const res = await authRequest('/v2/sessions/cursor-test-session/messages?cursor=invalid-cursor', { method: 'GET' });
+            expect(res.status).toBe(400);
+
+            const body = await res.json() as { error: string };
+            expect(body.error).toBe('Invalid cursor format');
+        });
+
+        it('should return 400 for cursor without cursor_v1_ prefix', async () => {
+            const session = createTestSession(TEST_USER_ID, { id: 'cursor-prefix-session' });
+            drizzleMock.seedData('sessions', [session]);
+
+            const res = await authRequest('/v2/sessions/cursor-prefix-session/messages?cursor=some_random_id', { method: 'GET' });
+            expect(res.status).toBe(400);
+        });
+
+        it('should return empty array when session has no messages', async () => {
+            const session = createTestSession(TEST_USER_ID, { id: 'empty-messages-session' });
+            drizzleMock.seedData('sessions', [session]);
+
+            const body = await expectOk<{ messages: unknown[]; nextCursor: string | null }>(
+                await authRequest('/v2/sessions/empty-messages-session/messages', { method: 'GET' })
+            );
+
+            expect(body.messages).toHaveLength(0);
+            expect(body.nextCursor).toBeNull();
+        });
+
+        it('should return messages for owned session with pagination metadata', async () => {
+            const session = createTestSession(TEST_USER_ID, { id: 'messages-session' });
+            drizzleMock.seedData('sessions', [session]);
+
+            const messages = [
+                {
+                    id: 'msg-001',
+                    sessionId: 'messages-session',
+                    localId: 'local-1',
+                    seq: 0,
+                    content: JSON.stringify({ type: 'user', text: 'Hello' }),
+                    createdAt: new Date(),
+                    updatedAt: new Date(),
+                },
+                {
+                    id: 'msg-002',
+                    sessionId: 'messages-session',
+                    localId: 'local-2',
+                    seq: 1,
+                    content: JSON.stringify({ type: 'assistant', text: 'Hi there!' }),
+                    createdAt: new Date(),
+                    updatedAt: new Date(),
+                },
+            ];
+            drizzleMock.seedData('sessionMessages', messages);
+
+            const body = await expectOk<{ messages: { id: string; sessionId: string }[]; nextCursor: string | null }>(
+                await authRequest('/v2/sessions/messages-session/messages', { method: 'GET' })
+            );
+
+            expect(body.messages).toHaveLength(2);
+            expect(body.messages.every(m => m.sessionId === 'messages-session')).toBe(true);
+            expect(body.nextCursor).toBeNull(); // Only 2 messages, no next page
+        });
+
+        it('should return nextCursor when more messages exist than limit', async () => {
+            const session = createTestSession(TEST_USER_ID, { id: 'paginated-messages-session' });
+            drizzleMock.seedData('sessions', [session]);
+
+            // Create more messages than default limit (default is 50, use small limit in query)
+            const messages = Array.from({ length: 15 }, (_, i) => ({
+                id: `msg-${String(i).padStart(4, '0')}`,
+                sessionId: 'paginated-messages-session',
+                localId: `local-${i}`,
+                seq: i,
+                content: JSON.stringify({ type: 'user', text: `Message ${i}` }),
+                createdAt: new Date(),
+                updatedAt: new Date(),
+            }));
+            drizzleMock.seedData('sessionMessages', messages);
+
+            const body = await expectOk<{ messages: { id: string }[]; nextCursor: string | null }>(
+                await authRequest('/v2/sessions/paginated-messages-session/messages?limit=10', { method: 'GET' })
+            );
+
+            expect(body.messages).toHaveLength(10);
+            expect(body.nextCursor).not.toBeNull();
+            expect(body.nextCursor).toMatch(/^cursor_v1_/);
+        });
+
+        it('should return null nextCursor when no more messages', async () => {
+            const session = createTestSession(TEST_USER_ID, { id: 'few-messages-session' });
+            drizzleMock.seedData('sessions', [session]);
+
+            const messages = Array.from({ length: 5 }, (_, i) => ({
+                id: `msg-${i}`,
+                sessionId: 'few-messages-session',
+                localId: `local-${i}`,
+                seq: i,
+                content: JSON.stringify({ type: 'user', text: `Message ${i}` }),
+                createdAt: new Date(),
+                updatedAt: new Date(),
+            }));
+            drizzleMock.seedData('sessionMessages', messages);
+
+            const body = await expectOk<{ messages: { id: string }[]; nextCursor: string | null }>(
+                await authRequest('/v2/sessions/few-messages-session/messages?limit=10', { method: 'GET' })
+            );
+
+            expect(body.messages).toHaveLength(5);
+            expect(body.nextCursor).toBeNull();
+        });
+
+        it('should order messages by ID descending (most recent first)', async () => {
+            const session = createTestSession(TEST_USER_ID, { id: 'ordered-messages-session' });
+            drizzleMock.seedData('sessions', [session]);
+
+            // Create messages with IDs that have clear ordering
+            const messages = [
+                {
+                    id: 'aaa-oldest',
+                    sessionId: 'ordered-messages-session',
+                    localId: 'local-1',
+                    seq: 0,
+                    content: JSON.stringify({ type: 'user', text: 'First' }),
+                    createdAt: new Date('2024-01-01'),
+                    updatedAt: new Date('2024-01-01'),
+                },
+                {
+                    id: 'bbb-middle',
+                    sessionId: 'ordered-messages-session',
+                    localId: 'local-2',
+                    seq: 1,
+                    content: JSON.stringify({ type: 'assistant', text: 'Second' }),
+                    createdAt: new Date('2024-01-02'),
+                    updatedAt: new Date('2024-01-02'),
+                },
+                {
+                    id: 'ccc-newest',
+                    sessionId: 'ordered-messages-session',
+                    localId: 'local-3',
+                    seq: 2,
+                    content: JSON.stringify({ type: 'user', text: 'Third' }),
+                    createdAt: new Date('2024-01-03'),
+                    updatedAt: new Date('2024-01-03'),
+                },
+            ];
+            drizzleMock.seedData('sessionMessages', messages);
+
+            const body = await expectOk<{ messages: { id: string }[] }>(
+                await authRequest('/v2/sessions/ordered-messages-session/messages', { method: 'GET' })
+            );
+
+            expect(body.messages).toHaveLength(3);
+            // Should be ordered descending by ID: ccc, bbb, aaa
+            expect(body.messages[0]?.id).toBe('ccc-newest');
+            expect(body.messages[1]?.id).toBe('bbb-middle');
+            expect(body.messages[2]?.id).toBe('aaa-oldest');
+        });
+
+        it('should paginate using cursor correctly', async () => {
+            const session = createTestSession(TEST_USER_ID, { id: 'cursor-pagination-session' });
+            drizzleMock.seedData('sessions', [session]);
+
+            // Create enough messages to require pagination
+            const messages = Array.from({ length: 20 }, (_, i) => ({
+                id: `msg-${String(i).padStart(4, '0')}`,
+                sessionId: 'cursor-pagination-session',
+                localId: `local-${i}`,
+                seq: i,
+                content: JSON.stringify({ type: 'user', text: `Message ${i}` }),
+                createdAt: new Date(),
+                updatedAt: new Date(),
+            }));
+            drizzleMock.seedData('sessionMessages', messages);
+
+            // First page
+            const firstPage = await expectOk<{ messages: { id: string }[]; nextCursor: string | null }>(
+                await authRequest('/v2/sessions/cursor-pagination-session/messages?limit=10', { method: 'GET' })
+            );
+
+            expect(firstPage.messages).toHaveLength(10);
+
+            // Second page using cursor
+            if (firstPage.nextCursor) {
+                const secondPage = await expectOk<{ messages: { id: string }[]; nextCursor: string | null }>(
+                    await authRequest(`/v2/sessions/cursor-pagination-session/messages?limit=10&cursor=${firstPage.nextCursor}`, { method: 'GET' })
+                );
+                expect(secondPage.messages).toBeDefined();
+                // Second page should have remaining messages
+                expect(secondPage.messages.length).toBeGreaterThan(0);
+            }
+        });
+    });
+
     describe('GET /v1/sessions/:id/messages - List Session Messages', () => {
         it('should require authentication', async () => {
             const res = await unauthRequest('/v1/sessions/session-123/messages', { method: 'GET' });
