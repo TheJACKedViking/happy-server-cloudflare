@@ -37,7 +37,27 @@ vi.mock('@/lib/auth', () => ({
 }));
 
 import { app } from '@/index';
-import { authHeader, jsonBody, INVALID_TOKEN } from './test-utils';
+import {
+    authHeader,
+    jsonBody,
+    INVALID_TOKEN,
+    createMockR2,
+    createMockDurableObjectNamespace,
+} from './test-utils';
+
+/**
+ * Create mock environment for Hono app.request()
+ * Provides the HAPPY_MASTER_SECRET and other required bindings
+ */
+function createTestEnv() {
+    return {
+        ENVIRONMENT: 'development' as const,
+        HAPPY_MASTER_SECRET: 'test-secret-for-vitest-tests-min-32-chars',
+        DB: {} as D1Database,
+        UPLOADS: createMockR2(),
+        CONNECTION_MANAGER: createMockDurableObjectNamespace(),
+    };
+}
 
 /**
  * Helper to create mock Ed25519 signature data
@@ -54,8 +74,12 @@ function createMockAuthData() {
 }
 
 describe('Authentication Routes', () => {
+    // Shared test environment - declared in describe scope for TypeScript to track usage
+    let testEnv: ReturnType<typeof createTestEnv>;
+
     beforeEach(() => {
         vi.clearAllMocks();
+        testEnv = createTestEnv();
     });
 
     describe('POST /v1/auth - Direct Authentication', () => {
@@ -66,7 +90,7 @@ describe('Authentication Routes', () => {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: jsonBody(authData),
-            });
+            }, testEnv);
 
             // May return 200 (success) or 500 (if crypto fails in test env)
             expect([200, 500]).toContain(res.status);
@@ -80,7 +104,7 @@ describe('Authentication Routes', () => {
                     challenge: 'test',
                     signature: 'test',
                 }),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(400);
         });
@@ -93,7 +117,7 @@ describe('Authentication Routes', () => {
                     publicKey: 'test',
                     signature: 'test',
                 }),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(400);
         });
@@ -106,7 +130,7 @@ describe('Authentication Routes', () => {
                     publicKey: 'test',
                     challenge: 'test',
                 }),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(400);
         });
@@ -116,7 +140,7 @@ describe('Authentication Routes', () => {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: '{}',
-            });
+            }, testEnv);
 
             expect(res.status).toBe(400);
         });
@@ -131,7 +155,7 @@ describe('Authentication Routes', () => {
                     publicKey: 'base64-encoded-public-key-here',
                     supportsV2: true,
                 }),
-            });
+            }, testEnv);
 
             // May succeed or fail based on DB availability
             expect([200, 500]).toContain(res.status);
@@ -144,7 +168,7 @@ describe('Authentication Routes', () => {
                 body: jsonBody({
                     supportsV2: true,
                 }),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(400);
         });
@@ -156,7 +180,7 @@ describe('Authentication Routes', () => {
 
             const res = await app.request(`/v1/auth/request/status?publicKey=${publicKey}`, {
                 method: 'GET',
-            });
+            }, testEnv);
 
             // Should return status info or error
             expect([200, 404, 500]).toContain(res.status);
@@ -165,7 +189,7 @@ describe('Authentication Routes', () => {
         it('should reject status check without publicKey', async () => {
             const res = await app.request('/v1/auth/request/status', {
                 method: 'GET',
-            });
+            }, testEnv);
 
             expect(res.status).toBe(400);
         });
@@ -180,7 +204,7 @@ describe('Authentication Routes', () => {
                     publicKey: 'terminal-public-key',
                     response: 'encrypted-approval-response',
                 }),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -193,7 +217,7 @@ describe('Authentication Routes', () => {
                     publicKey: 'terminal-public-key-base64',
                     response: 'encrypted-approval-response-base64',
                 }),
-            });
+            }, testEnv);
 
             // May succeed or fail based on DB state
             expect([200, 404, 500]).toContain(res.status);
@@ -206,7 +230,7 @@ describe('Authentication Routes', () => {
                 body: jsonBody({
                     response: 'encrypted-response',
                 }),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(400);
         });
@@ -218,7 +242,7 @@ describe('Authentication Routes', () => {
                 body: jsonBody({
                     publicKey: 'terminal-public-key',
                 }),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(400);
         });
@@ -233,7 +257,7 @@ describe('Authentication Routes', () => {
                     publicKey: 'account-public-key-base64',
                     supportsV2: true,
                 }),
-            });
+            }, testEnv);
 
             // May succeed or fail based on implementation
             expect([200, 500]).toContain(res.status);
@@ -244,7 +268,7 @@ describe('Authentication Routes', () => {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: jsonBody({}),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(400);
         });
@@ -259,7 +283,7 @@ describe('Authentication Routes', () => {
                     publicKey: 'account-public-key',
                     response: 'encrypted-response',
                 }),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -272,7 +296,7 @@ describe('Authentication Routes', () => {
                     publicKey: 'account-public-key-base64',
                     response: 'encrypted-approval-response-base64',
                 }),
-            });
+            }, testEnv);
 
             // May succeed or fail based on DB state
             expect([200, 404, 500]).toContain(res.status);
@@ -291,7 +315,7 @@ describe('Authentication Routes', () => {
                     publicKey: 'test',
                     response: 'test',
                 }),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -307,7 +331,7 @@ describe('Authentication Routes', () => {
                     publicKey: 'test',
                     response: 'test',
                 }),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
@@ -323,7 +347,7 @@ describe('Authentication Routes', () => {
                     publicKey: 'test',
                     response: 'test',
                 }),
-            });
+            }, testEnv);
 
             expect(res.status).toBe(401);
         });
