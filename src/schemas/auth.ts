@@ -183,7 +183,7 @@ export const TerminalAuthStatusQuerySchema = z.object({
                 in: 'query',
             },
             description: 'Base64-encoded public key to check status for',
-            example: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+            example: '3q2+7wQbKq9u3rXhOCvH5wPqVZ6ZkA4kZJ6gBRH5mO0=',
         }),
 });
 
