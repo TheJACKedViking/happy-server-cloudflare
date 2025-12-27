@@ -173,6 +173,21 @@ deploy() {
                 log_info "Custom domain: Configure in Cloudflare dashboard"
                 ;;
         esac
+
+        # Run post-deployment health check (HAP-587)
+        echo ""
+        log_info "Running post-deployment health check..."
+        if [ -x "$SCRIPT_DIR/post-deploy-health-check.sh" ]; then
+            if "$SCRIPT_DIR/post-deploy-health-check.sh" "$env"; then
+                log_success "Post-deployment health check passed"
+            else
+                log_warn "Post-deployment health check failed - deployment may be unhealthy"
+                log_warn "Run: ./scripts/post-deploy-health-check.sh $env --verbose"
+                # Don't exit with error - let user decide if rollback is needed
+            fi
+        else
+            log_warn "Health check script not found or not executable"
+        fi
     else
         log_error "Deployment failed!"
         exit 1

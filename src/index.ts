@@ -26,6 +26,7 @@ import usageRoutes from '@/routes/usage';
 import analyticsRoutes from '@/routes/analytics';
 import ciMetricsRoutes from '@/routes/ciMetrics';
 import clientMetricsRoutes from '@/routes/clientMetrics';
+import healthRoutes from '@/routes/health';
 
 // Export Durable Object classes for Cloudflare Workers
 // These must be exported from the main entry point for Wrangler to detect them
@@ -139,11 +140,12 @@ app.use('*', cors());
  * Environment validation middleware (HAP-523)
  * Validates required configuration before processing any routes.
  * Returns structured JSON error response with documentation link.
- * Skip validation for health endpoint (allows monitoring when misconfigured).
+ * Skip validation for health endpoints (allows monitoring when misconfigured).
  */
 app.use('*', async (c, next): Promise<Response | void> => {
-    // Allow /health endpoint even without configuration (for basic liveness checks)
-    if (c.req.path === '/health') {
+    // Allow health endpoints even without configuration (for monitoring checks)
+    // HAP-587: Added /health/messages for deployment validation
+    if (c.req.path === '/health' || c.req.path.startsWith('/health/')) {
         await next();
         return;
     }
@@ -229,6 +231,9 @@ app.route('/', ciMetricsRoutes);
 
 // Mount client metrics routes (HAP-577: Validation failure metrics from mobile app)
 app.route('/', clientMetricsRoutes);
+
+// Mount specialized health check routes (HAP-587: Deployment health validation)
+app.route('/', healthRoutes);
 
 // Mount test routes
 app.route('/test', testRoutes);
