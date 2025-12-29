@@ -545,7 +545,7 @@ function createSelectMock<T extends BaseEntity>(store: DataStore): SelectBuilder
         // Handle SQL template objects from Drizzle
         // These look like: { queryChunks: [...], sql: SQL<...> }
         // or for eq/and: { sql: SQL<...>, getSQL: () => ... }
-        if (typeof condition === 'object' && condition !== null) {
+        if (typeof condition === 'object') {
             const obj = condition as Record<string, unknown>;
 
             // Check if this is a Drizzle SQL object

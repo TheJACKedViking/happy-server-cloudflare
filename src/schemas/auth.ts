@@ -25,7 +25,7 @@ export const DirectAuthRequestSchema = z
             .min(1)
             .openapi({
                 description: 'Base64-encoded Ed25519 public key',
-                example: '3q2+7wQbKq9u3rXhOCvH5wPqVZ6ZkA4kZJ6gBRH5mO0=', // 32-byte raw key
+                example: '3q2+7wQbKq9u3rXhOCvH5wPqVZ6ZkA4kZJ6gBRH5mO0=', // 32-byte raw public key (before Base64 encoding)
             }),
         challenge: z
             .string()
@@ -78,7 +78,7 @@ export const TerminalAuthRequestSchema = z
             .min(1)
             .openapi({
                 description: 'Base64-encoded X25519 public key for encryption',
-                example: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+                example: '3q2+7wQbKq9u3rXhOCvH5wPqVZ6ZkA4kZJ6gBRH5mO0=',
             }),
         supportsV2: z
             .boolean()
@@ -142,7 +142,7 @@ export const TerminalAuthResponseSchema = z
             .min(1)
             .openapi({
                 description: 'Base64-encoded public key of the terminal being approved',
-                example: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+                example: 'KZ8d1L0wPz9vQ2ZkYWJjMTIzNDU2Nzg5MDEyMw==',
             }),
         response: z
             .string()
@@ -183,7 +183,7 @@ export const TerminalAuthStatusQuerySchema = z.object({
                 in: 'query',
             },
             description: 'Base64-encoded public key to check status for',
-            example: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+            example: '3q2+7wQbKq9u3rXhOCvH5wPqVZ6ZkA4kZJ6gBRH5mO0=',
         }),
 });
 
