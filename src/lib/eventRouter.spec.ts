@@ -263,9 +263,9 @@ describe('Update Event Builders', () => {
             expect(payload.id).toBe('update-1');
             expect(payload.seq).toBe(10);
             expect(payload.body.t).toBe('new-session');
-            expect(payload.body.id).toBe('session-123');
-            expect(payload.body.seq).toBe(5);
-            expect(payload.body.metadata).toBe('{"name":"Test"}');
+            expect((payload.body as any).sid).toBe('session-123'); // HAP-654: Standardized to `sid`
+            expect((payload.body as any).seq).toBe(5);
+            expect((payload.body as any).metadata).toBe('{"name":"Test"}');
             expect(payload.body.active).toBe(true);
             expect(payload.body.dataEncryptionKey).toBeDefined();
             expect(typeof payload.createdAt).toBe('number');
@@ -343,7 +343,7 @@ describe('Update Event Builders', () => {
             );
 
             expect(payload.body.t).toBe('update-session');
-            expect(payload.body.id).toBe('session-123');
+            expect((payload.body as any).sid).toBe('session-123'); // HAP-654: Standardized to `sid`
             expect(payload.body.metadata).toEqual({ value: '{"name":"Updated"}', version: 2 });
             expect(payload.body.agentState).toBeUndefined();
         });
@@ -663,7 +663,7 @@ describe('Ephemeral Event Builders', () => {
             const payload = buildSessionActivityEphemeral('session-123', true, now, true);
 
             expect(payload.type).toBe('activity');
-            expect(payload.id).toBe('session-123');
+            expect(payload.sid).toBe('session-123'); // HAP-654: Standardized to `sid`
             expect(payload.active).toBe(true);
             expect(payload.activeAt).toBe(now);
             expect(payload.thinking).toBe(true);
@@ -686,7 +686,7 @@ describe('Ephemeral Event Builders', () => {
             const payload = buildMachineActivityEphemeral('machine-123', true, now);
 
             expect(payload.type).toBe('machine-activity');
-            expect(payload.id).toBe('machine-123');
+            expect(payload.machineId).toBe('machine-123');
             expect(payload.active).toBe(true);
             expect(payload.activeAt).toBe(now);
         });
@@ -705,7 +705,7 @@ describe('Ephemeral Event Builders', () => {
             const payload = buildUsageEphemeral('session-123', 'claude-3-sonnet', tokens, cost);
 
             expect(payload.type).toBe('usage');
-            expect(payload.id).toBe('session-123');
+            expect(payload.sid).toBe('session-123'); // HAP-654: Standardized to `sid`
             expect(payload.key).toBe('claude-3-sonnet');
             expect(payload.tokens).toEqual(tokens);
             expect(payload.cost).toEqual(cost);

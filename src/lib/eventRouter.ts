@@ -233,7 +233,7 @@ export function buildNewSessionUpdate(
         seq: updateSeq,
         body: {
             t: 'new-session',
-            id: session.id,
+            sid: session.id, // HAP-654: Standardized to `sid`
             seq: session.seq,
             metadata: session.metadata,
             metadataVersion: session.metadataVersion,
@@ -305,7 +305,7 @@ export function buildUpdateSessionUpdate(
         seq: updateSeq,
         body: {
             t: 'update-session',
-            id: sessionId,
+            sid: sessionId, // HAP-654: Standardized to `sid`
             metadata,
             agentState,
         },
@@ -604,7 +604,7 @@ export function buildSessionActivityEphemeral(
 ): EphemeralPayload {
     return {
         type: 'activity',
-        id: sessionId,
+        sid: sessionId, // HAP-654: Standardized to `sid`
         active,
         activeAt,
         thinking: thinking ?? false,
@@ -623,7 +623,7 @@ export function buildMachineActivityEphemeral(
 ): EphemeralPayload {
     return {
         type: 'machine-activity',
-        id: machineId,
+        machineId,
         active,
         activeAt,
     };
@@ -644,7 +644,7 @@ export function buildUsageEphemeral(
 ): EphemeralPayload {
     return {
         type: 'usage',
-        id: sessionId,
+        sid: sessionId, // HAP-654: Standardized to `sid`
         key,
         tokens,
         cost,

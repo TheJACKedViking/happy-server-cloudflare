@@ -331,7 +331,7 @@ export async function handleSessionAlive(
                 event: 'ephemeral',
                 data: {
                     type: 'activity',
-                    id: sid,
+                    sid, // HAP-654: Standardized to `sid`
                     active: true,
                     activeAt: time,
                     thinking: thinking || false,
@@ -393,7 +393,7 @@ export async function handleSessionEnd(
                 event: 'ephemeral',
                 data: {
                     type: 'activity',
-                    id: sid,
+                    sid, // HAP-654: Standardized to `sid`
                     active: false,
                     activeAt: time,
                     thinking: false,
@@ -564,7 +564,7 @@ export async function handleMachineAlive(
                 event: 'ephemeral',
                 data: {
                     type: 'machine-activity',
-                    id: machineId,
+                    machineId, // HAP-655: Standardized to `machineId`
                     active: true,
                     activeAt: time,
                 } satisfies EphemeralEvent,
@@ -1376,7 +1376,7 @@ export async function handleUsageReport(
                 event: 'ephemeral',
                 data: {
                     type: 'usage',
-                    id: sessionId,
+                    sid: sessionId, // HAP-654: Standardized to `sid`
                     key,
                     tokens,
                     cost,
