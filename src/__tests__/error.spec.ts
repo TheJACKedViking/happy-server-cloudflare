@@ -5,10 +5,12 @@
  * - Error message fallback (empty message -> 'Internal server error')
  * - Error cause handling (with and without cause property)
  * - HTTPException handling
+ * - AppError handling (from @happy/errors package)
  * - Status code branches (>= 500 server errors vs < 500 client errors)
  *
- * Note: All error responses use the flat { error: string } format for
- * consistency with route handlers and OpenAPI schemas.
+ * Note: HTTPException responses use the flat { error: string } format,
+ * while AppError responses use { code, message, canTryAgain } format
+ * for consistency with happy-server.
  *
  * @module __tests__/error.spec
  */
@@ -16,6 +18,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
+import { AppError, ErrorCodes } from '@happy/errors';
 import { errorHandler } from '@/middleware/error';
 
 describe('Error Handler Middleware', () => {
@@ -530,6 +533,202 @@ describe('Error Handler Middleware', () => {
             const logCall = consoleErrorSpy.mock.calls[0];
             expect(logCall[1]).toHaveProperty('cause');
             expect(logCall[1].cause).toBe('');
+        });
+    });
+
+    describe('AppError Handling', () => {
+        it('should return structured response for AppError', async () => {
+            app.get('/test', () => {
+                throw new AppError(ErrorCodes.NOT_FOUND, 'Session not found');
+            });
+
+            const res = await app.request('/test');
+            const body = (await res.json()) as { code: string; message: string; canTryAgain: boolean };
+
+            expect(res.status).toBe(404);
+            expect(body.code).toBe('NOT_FOUND');
+            expect(body.message).toBe('Session not found');
+            expect(body.canTryAgain).toBe(false);
+        });
+
+        it('should return 401 for authentication errors', async () => {
+            app.get('/test', () => {
+                throw new AppError(ErrorCodes.AUTH_FAILED, 'Invalid token');
+            });
+
+            const res = await app.request('/test');
+            const body = (await res.json()) as { code: string; message: string; canTryAgain: boolean };
+
+            expect(res.status).toBe(401);
+            expect(body.code).toBe('AUTH_FAILED');
+            expect(body.message).toBe('Invalid token');
+        });
+
+        it('should return 400 for validation errors', async () => {
+            app.get('/test', () => {
+                throw new AppError(ErrorCodes.INVALID_INPUT, 'Invalid cursor format');
+            });
+
+            const res = await app.request('/test');
+            const body = (await res.json()) as { code: string; message: string; canTryAgain: boolean };
+
+            expect(res.status).toBe(400);
+            expect(body.code).toBe('INVALID_INPUT');
+            expect(body.message).toBe('Invalid cursor format');
+        });
+
+        it('should include canTryAgain when set to true', async () => {
+            app.get('/test', () => {
+                throw new AppError(ErrorCodes.FETCH_FAILED, 'Network error', { canTryAgain: true });
+            });
+
+            const res = await app.request('/test');
+            const body = (await res.json()) as { code: string; message: string; canTryAgain: boolean };
+
+            expect(res.status).toBe(500);
+            expect(body.code).toBe('FETCH_FAILED');
+            expect(body.canTryAgain).toBe(true);
+        });
+
+        it('should return 500 for internal errors', async () => {
+            app.get('/test', () => {
+                throw new AppError(ErrorCodes.INTERNAL_ERROR, 'Something went wrong');
+            });
+
+            const res = await app.request('/test');
+            const body = (await res.json()) as { code: string; message: string; canTryAgain: boolean };
+
+            expect(res.status).toBe(500);
+            expect(body.code).toBe('INTERNAL_ERROR');
+            expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
+        });
+
+        it('should log to console.warn for client errors (status < 500)', async () => {
+            app.get('/test', () => {
+                throw new AppError(ErrorCodes.NOT_FOUND, 'Resource not found');
+            });
+
+            await app.request('/test');
+
+            expect(consoleWarnSpy).toHaveBeenCalledTimes(1);
+            expect(consoleErrorSpy).not.toHaveBeenCalled();
+
+            const logCall = consoleWarnSpy.mock.calls[0];
+            expect(logCall[0]).toBe('[Error Handler] Client error (AppError):');
+            expect(logCall[1]).toMatchObject({
+                code: 'NOT_FOUND',
+                message: 'Resource not found',
+                status: 404,
+            });
+        });
+
+        it('should log to console.error for server errors (status >= 500)', async () => {
+            app.get('/test', () => {
+                throw new AppError(ErrorCodes.INTERNAL_ERROR, 'Server error');
+            });
+
+            await app.request('/test');
+
+            expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
+            expect(consoleWarnSpy).not.toHaveBeenCalled();
+
+            const logCall = consoleErrorSpy.mock.calls[0];
+            expect(logCall[0]).toBe('[Error Handler] Server error (AppError):');
+            expect(logCall[1]).toMatchObject({
+                code: 'INTERNAL_ERROR',
+                message: 'Server error',
+                status: 500,
+            });
+        });
+
+        it('should include cause in log when AppError has cause', async () => {
+            const originalError = new Error('Original database error');
+            app.get('/test', () => {
+                throw new AppError(ErrorCodes.INTERNAL_ERROR, 'Database failed', {
+                    cause: originalError,
+                });
+            });
+
+            await app.request('/test');
+
+            expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
+            const logCall = consoleErrorSpy.mock.calls[0];
+            expect(logCall[1]).toHaveProperty('cause');
+            expect(logCall[1].cause).toBe('Original database error');
+        });
+
+        it('should include context in log when AppError has context', async () => {
+            app.get('/test', () => {
+                throw new AppError(ErrorCodes.INTERNAL_ERROR, 'Query failed', {
+                    context: { query: 'SELECT * FROM users', attemptNumber: 3 },
+                });
+            });
+
+            await app.request('/test');
+
+            expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
+            const logCall = consoleErrorSpy.mock.calls[0];
+            expect(logCall[1]).toHaveProperty('context');
+            expect(logCall[1].context).toEqual({
+                query: 'SELECT * FROM users',
+                attemptNumber: 3,
+            });
+        });
+
+        it('should return 409 for conflict errors', async () => {
+            app.get('/test', () => {
+                throw new AppError(ErrorCodes.ALREADY_EXISTS, 'Resource already exists');
+            });
+
+            const res = await app.request('/test');
+            const body = (await res.json()) as { code: string; message: string; canTryAgain: boolean };
+
+            expect(res.status).toBe(409);
+            expect(body.code).toBe('ALREADY_EXISTS');
+        });
+
+        it('should return 503 for connection errors', async () => {
+            app.get('/test', () => {
+                throw new AppError(ErrorCodes.CONNECT_FAILED, 'Connection refused');
+            });
+
+            const res = await app.request('/test');
+            const body = (await res.json()) as { code: string; message: string; canTryAgain: boolean };
+
+            expect(res.status).toBe(503);
+            expect(body.code).toBe('CONNECT_FAILED');
+        });
+
+        it('should return 504 for timeout errors', async () => {
+            app.get('/test', () => {
+                throw new AppError(ErrorCodes.TIMEOUT, 'Request timed out');
+            });
+
+            const res = await app.request('/test');
+            const body = (await res.json()) as { code: string; message: string; canTryAgain: boolean };
+
+            expect(res.status).toBe(504);
+            expect(body.code).toBe('TIMEOUT');
+        });
+
+        it('should handle AppError.fromUnknown factory method', async () => {
+            const originalError = new Error('Underlying error');
+            app.get('/test', () => {
+                throw AppError.fromUnknown(
+                    ErrorCodes.INTERNAL_ERROR,
+                    'Operation failed',
+                    originalError,
+                    true
+                );
+            });
+
+            const res = await app.request('/test');
+            const body = (await res.json()) as { code: string; message: string; canTryAgain: boolean };
+
+            expect(res.status).toBe(500);
+            expect(body.code).toBe('INTERNAL_ERROR');
+            expect(body.message).toBe('Operation failed');
+            expect(body.canTryAgain).toBe(true);
         });
     });
 });
