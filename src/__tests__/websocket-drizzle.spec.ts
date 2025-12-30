@@ -243,7 +243,7 @@ describe('WebSocket Routes with Drizzle Mocking', () => {
             // Middleware validates env BEFORE route handler executes
             // When HAPPY_MASTER_SECRET is missing, validateEnv throws and middleware returns 500
             expect(response.status).toBe(500);
-            const body = await response.json();
+            const body = await response.json() as { error: string; message: string };
             expect(body.error).toBe('Configuration Error');
             expect(body.message).toContain('HAPPY_MASTER_SECRET');
 
@@ -423,7 +423,7 @@ describe('WebSocket Routes with Drizzle Mocking', () => {
             // Middleware validates env BEFORE route handler executes
             // When HAPPY_MASTER_SECRET is missing, validateEnv throws and middleware returns 500
             expect(response.status).toBe(500);
-            const body = await response.json();
+            const body = await response.json() as { error: string; message: string };
             expect(body.error).toBe('Configuration Error');
             expect(body.message).toContain('HAPPY_MASTER_SECRET');
 
@@ -586,7 +586,7 @@ describe('WebSocket Routes with Drizzle Mocking', () => {
             // Middleware validates env BEFORE route handler executes
             // When HAPPY_MASTER_SECRET is missing, validateEnv throws and middleware returns 500
             expect(response.status).toBe(500);
-            const body = await response.json();
+            const body = await response.json() as { error: string; message: string };
             expect(body.error).toBe('Configuration Error');
             expect(body.message).toContain('HAPPY_MASTER_SECRET');
 
