@@ -22,6 +22,8 @@ import {
     FriendRequestBodySchema,
     FriendOperationResponseSchema,
     FriendListResponseSchema,
+    PrivacySettingsResponseSchema,
+    UpdatePrivacySettingsBodySchema,
     type RelationshipStatusSchema,
 } from '@/schemas/user';
 import { z } from '@hono/zod-openapi';
@@ -67,6 +69,7 @@ const userRoutes = new OpenAPIHono<{ Bindings: Env }>();
 userRoutes.use('/v1/users/*', authMiddleware());
 userRoutes.use('/v1/friends/*', authMiddleware());
 userRoutes.use('/v1/friends', authMiddleware());
+userRoutes.use('/v1/privacy', authMiddleware());
 
 // ============================================================================
 // Helper Functions
@@ -815,6 +818,145 @@ userRoutes.openapi(listFriendsRoute, async (c) => {
     );
 
     return c.json({ friends });
+});
+
+// ============================================================================
+// GET /v1/users/me/privacy - Get Privacy Settings (HAP-727)
+// ============================================================================
+
+const getPrivacyRoute = createRoute({
+    method: 'get',
+    path: '/v1/users/me/privacy',
+    responses: {
+        200: {
+            content: {
+                'application/json': {
+                    schema: PrivacySettingsResponseSchema,
+                },
+            },
+            description: 'Current privacy settings',
+        },
+        401: {
+            content: {
+                'application/json': {
+                    schema: UnauthorizedErrorSchema,
+                },
+            },
+            description: 'Unauthorized',
+        },
+    },
+    tags: ['Privacy'],
+    summary: 'Get privacy settings',
+    description: 'Get the current user\'s privacy settings.',
+});
+
+/**
+ * Get privacy settings for the current user.
+ */
+// @ts-expect-error - OpenAPI handler type inference doesn't carry Variables from middleware
+userRoutes.openapi(getPrivacyRoute, async (c) => {
+    const userId = (c as unknown as Context<{ Bindings: Env; Variables: AuthVariables }>).get('userId');
+    const db = getDb(c.env.DB);
+
+    // Fetch user's privacy settings
+    const user = await db.query.accounts.findFirst({
+        where: (accts, { eq: e }) => e(accts.id, userId),
+        columns: { showOnlineStatus: true },
+    });
+
+    if (!user) {
+        return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    return c.json({
+        showOnlineStatus: user.showOnlineStatus,
+    });
+});
+
+// ============================================================================
+// PATCH /v1/users/me/privacy - Update Privacy Settings (HAP-727)
+// ============================================================================
+
+const updatePrivacyRoute = createRoute({
+    method: 'patch',
+    path: '/v1/users/me/privacy',
+    request: {
+        body: {
+            content: {
+                'application/json': {
+                    schema: UpdatePrivacySettingsBodySchema,
+                },
+            },
+        },
+    },
+    responses: {
+        200: {
+            content: {
+                'application/json': {
+                    schema: PrivacySettingsResponseSchema,
+                },
+            },
+            description: 'Updated privacy settings',
+        },
+        401: {
+            content: {
+                'application/json': {
+                    schema: UnauthorizedErrorSchema,
+                },
+            },
+            description: 'Unauthorized',
+        },
+    },
+    tags: ['Privacy'],
+    summary: 'Update privacy settings',
+    description: `Update the current user's privacy settings.
+
+**showOnlineStatus:**
+- When true (default): Friends can see when you're online
+- When false: You appear offline to all friends
+
+Note: This affects presence broadcast to friends.`,
+});
+
+/**
+ * Update privacy settings for the current user.
+ * Currently supports:
+ * - showOnlineStatus: Whether to broadcast online status to friends
+ */
+// @ts-expect-error - OpenAPI handler type inference doesn't carry Variables from middleware
+userRoutes.openapi(updatePrivacyRoute, async (c) => {
+    const userId = (c as unknown as Context<{ Bindings: Env; Variables: AuthVariables }>).get('userId');
+    const body = c.req.valid('json');
+    const db = getDb(c.env.DB);
+
+    // Build update object with only provided fields
+    const updateData: { showOnlineStatus?: boolean; updatedAt: Date } = {
+        updatedAt: new Date(),
+    };
+
+    if (body.showOnlineStatus !== undefined) {
+        updateData.showOnlineStatus = body.showOnlineStatus;
+    }
+
+    // Update user's privacy settings
+    await db
+        .update(accounts)
+        .set(updateData)
+        .where(eq(accounts.id, userId));
+
+    // Fetch updated settings
+    const user = await db.query.accounts.findFirst({
+        where: (accts, { eq: e }) => e(accts.id, userId),
+        columns: { showOnlineStatus: true },
+    });
+
+    if (!user) {
+        return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    return c.json({
+        showOnlineStatus: user.showOnlineStatus,
+    });
 });
 
 export default userRoutes;

@@ -54,6 +54,11 @@ export const accounts = sqliteTable(
         firstName: text('firstName'),
         lastName: text('lastName'),
         username: text('username').unique(),
+
+        // Privacy settings (HAP-727)
+        showOnlineStatus: integer('showOnlineStatus', { mode: 'boolean' })
+            .notNull()
+            .default(true),
     },
     (table) => ({
         publicKeyIdx: uniqueIndex('Account_publicKey_key').on(table.publicKey),
@@ -210,6 +215,12 @@ export const sessions = sqliteTable(
         lastActiveAt: integer('lastActiveAt', { mode: 'timestamp_ms' })
             .notNull()
             .default(sql`(unixepoch() * 1000)`),
+        // Session state tracking for revival flow (HAP-734)
+        stoppedAt: integer('stoppedAt', { mode: 'timestamp_ms' }),
+        stoppedReason: text('stoppedReason'),
+        archivedAt: integer('archivedAt', { mode: 'timestamp_ms' }),
+        archiveReason: text('archiveReason'), // 'revival_failed' | 'user_requested' | 'timeout'
+        archiveError: text('archiveError'), // Original error for debugging
         createdAt: integer('createdAt', { mode: 'timestamp_ms' })
             .notNull()
             .default(sql`(unixepoch() * 1000)`),

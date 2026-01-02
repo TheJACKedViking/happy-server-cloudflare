@@ -1,0 +1,1 @@
+ALTER TABLE `Account` ADD `showOnlineStatus` integer DEFAULT true NOT NULL;

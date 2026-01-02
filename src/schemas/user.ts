@@ -198,3 +198,36 @@ export const FriendListResponseSchema = z
         }),
     })
     .openapi('FriendListResponse');
+
+// ============================================================================
+// Privacy Settings Routes (HAP-727)
+// ============================================================================
+
+/**
+ * Schema for privacy settings
+ */
+const PrivacySettingsSchema = z
+    .object({
+        showOnlineStatus: z.boolean().openapi({
+            description: 'Whether to show online status to friends',
+            example: true,
+        }),
+    })
+    .openapi('PrivacySettings');
+
+/**
+ * Schema for privacy settings response
+ */
+export const PrivacySettingsResponseSchema = PrivacySettingsSchema.openapi('PrivacySettingsResponse');
+
+/**
+ * Schema for update privacy settings request body
+ */
+export const UpdatePrivacySettingsBodySchema = z
+    .object({
+        showOnlineStatus: z.boolean().optional().openapi({
+            description: 'Whether to show online status to friends',
+            example: true,
+        }),
+    })
+    .openapi('UpdatePrivacySettingsBody');
