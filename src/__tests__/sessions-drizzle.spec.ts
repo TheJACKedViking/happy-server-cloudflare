@@ -1129,4 +1129,236 @@ describe('Session Routes with Drizzle Mocking', () => {
             expect(body.sessions[0]?.dataEncryptionKey).toBeNull();
         });
     });
+
+    // ========================================================================
+    // GET /v1/sessions/:id/state - Session State (HAP-734)
+    // ========================================================================
+
+    describe('GET /v1/sessions/:id/state - Session State (HAP-734)', () => {
+        it('should require authentication', async () => {
+            const res = await unauthRequest('/v1/sessions/session-123/state', { method: 'GET' });
+            expect(res.status).toBe(401);
+        });
+
+        it('should return 404 for non-existent session', async () => {
+            const res = await authRequest('/v1/sessions/non-existent/state', { method: 'GET' });
+            expect(res.status).toBe(404);
+
+            const body = await res.json() as { error: string };
+            expect(body.error).toBe('Session not found');
+        });
+
+        it('should return 404 for session owned by another user', async () => {
+            const otherSession = createTestSession(TEST_USER_ID_2, { id: 'other-user-state-session' });
+            drizzleMock.seedData('sessions', [otherSession]);
+
+            const res = await authRequest('/v1/sessions/other-user-state-session/state', { method: 'GET' });
+            expect(res.status).toBe(404);
+        });
+
+        it('should return active state for active session', async () => {
+            const activeSession = createTestSession(TEST_USER_ID, {
+                id: 'active-state-session',
+                active: true,
+            });
+            drizzleMock.seedData('sessions', [activeSession]);
+
+            const body = await expectOk<{
+                sessionId: string;
+                state: string;
+                stoppedAt: string | null;
+                stoppedReason: string | null;
+                lastActivity: string | null;
+            }>(await authRequest('/v1/sessions/active-state-session/state', { method: 'GET' }));
+
+            expect(body.sessionId).toBe('active-state-session');
+            expect(body.state).toBe('active');
+            expect(body.stoppedAt).toBeNull();
+            expect(body.stoppedReason).toBeNull();
+            expect(body.lastActivity).not.toBeNull();
+        });
+
+        it('should return stopped state for session with active=false', async () => {
+            const stoppedSession = createTestSession(TEST_USER_ID, {
+                id: 'stopped-state-session',
+                active: false,
+            });
+            drizzleMock.seedData('sessions', [stoppedSession]);
+
+            const body = await expectOk<{
+                sessionId: string;
+                state: string;
+            }>(await authRequest('/v1/sessions/stopped-state-session/state', { method: 'GET' }));
+
+            expect(body.sessionId).toBe('stopped-state-session');
+            expect(body.state).toBe('stopped');
+        });
+
+        it('should return stopped state for session with stoppedAt set', async () => {
+            const stoppedSession = createTestSession(TEST_USER_ID, {
+                id: 'stopped-at-session',
+                active: true, // Even if active is true
+                stoppedAt: new Date(),
+                stoppedReason: 'Method not found',
+            });
+            drizzleMock.seedData('sessions', [stoppedSession]);
+
+            const body = await expectOk<{
+                sessionId: string;
+                state: string;
+                stoppedAt: string;
+                stoppedReason: string;
+            }>(await authRequest('/v1/sessions/stopped-at-session/state', { method: 'GET' }));
+
+            expect(body.sessionId).toBe('stopped-at-session');
+            expect(body.state).toBe('stopped');
+            expect(body.stoppedAt).not.toBeNull();
+            expect(body.stoppedReason).toBe('Method not found');
+        });
+
+        it('should return archived state for archived session', async () => {
+            const archivedSession = createTestSession(TEST_USER_ID, {
+                id: 'archived-state-session',
+                active: false,
+                archivedAt: new Date(),
+                archiveReason: 'revival_failed',
+            });
+            drizzleMock.seedData('sessions', [archivedSession]);
+
+            const body = await expectOk<{
+                sessionId: string;
+                state: string;
+            }>(await authRequest('/v1/sessions/archived-state-session/state', { method: 'GET' }));
+
+            expect(body.sessionId).toBe('archived-state-session');
+            expect(body.state).toBe('archived');
+        });
+    });
+
+    // ========================================================================
+    // POST /v1/sessions/:id/archive - Archive Session (HAP-734)
+    // ========================================================================
+
+    describe('POST /v1/sessions/:id/archive - Archive Session (HAP-734)', () => {
+        it('should require authentication', async () => {
+            const res = await unauthRequest('/v1/sessions/session-123/archive', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ reason: 'revival_failed' }),
+            });
+            expect(res.status).toBe(401);
+        });
+
+        it('should return 404 for non-existent session', async () => {
+            const res = await authRequest('/v1/sessions/non-existent/archive', {
+                method: 'POST',
+                body: JSON.stringify({ reason: 'revival_failed' }),
+            });
+            expect(res.status).toBe(404);
+
+            const body = await res.json() as { error: string };
+            expect(body.error).toBe('Session not found');
+        });
+
+        it('should return 404 for session owned by another user', async () => {
+            const otherSession = createTestSession(TEST_USER_ID_2, { id: 'other-user-archive-session' });
+            drizzleMock.seedData('sessions', [otherSession]);
+
+            const res = await authRequest('/v1/sessions/other-user-archive-session/archive', {
+                method: 'POST',
+                body: JSON.stringify({ reason: 'revival_failed' }),
+            });
+            expect(res.status).toBe(404);
+        });
+
+        it('should archive session with revival_failed reason', async () => {
+            const session = createTestSession(TEST_USER_ID, { id: 'archive-revival-session' });
+            drizzleMock.seedData('sessions', [session]);
+
+            const body = await expectOk<{
+                success: boolean;
+                sessionId: string;
+                archivedAt: string;
+            }>(await authRequest('/v1/sessions/archive-revival-session/archive', {
+                method: 'POST',
+                body: JSON.stringify({
+                    reason: 'revival_failed',
+                    originalError: 'Method not found: /mcp/completion',
+                }),
+            }));
+
+            expect(body.success).toBe(true);
+            expect(body.sessionId).toBe('archive-revival-session');
+            expect(body.archivedAt).not.toBeNull();
+        });
+
+        it('should archive session with user_requested reason', async () => {
+            const session = createTestSession(TEST_USER_ID, { id: 'archive-user-session' });
+            drizzleMock.seedData('sessions', [session]);
+
+            const body = await expectOk<{
+                success: boolean;
+                sessionId: string;
+            }>(await authRequest('/v1/sessions/archive-user-session/archive', {
+                method: 'POST',
+                body: JSON.stringify({ reason: 'user_requested' }),
+            }));
+
+            expect(body.success).toBe(true);
+            expect(body.sessionId).toBe('archive-user-session');
+        });
+
+        it('should archive session with timeout reason', async () => {
+            const session = createTestSession(TEST_USER_ID, { id: 'archive-timeout-session' });
+            drizzleMock.seedData('sessions', [session]);
+
+            const body = await expectOk<{
+                success: boolean;
+                sessionId: string;
+            }>(await authRequest('/v1/sessions/archive-timeout-session/archive', {
+                method: 'POST',
+                body: JSON.stringify({ reason: 'timeout' }),
+            }));
+
+            expect(body.success).toBe(true);
+            expect(body.sessionId).toBe('archive-timeout-session');
+        });
+
+        it('should return 400 for already archived session', async () => {
+            const alreadyArchivedSession = createTestSession(TEST_USER_ID, {
+                id: 'already-archived-session',
+                active: false,
+                archivedAt: new Date(),
+                archiveReason: 'revival_failed',
+            });
+            drizzleMock.seedData('sessions', [alreadyArchivedSession]);
+
+            const res = await authRequest('/v1/sessions/already-archived-session/archive', {
+                method: 'POST',
+                body: JSON.stringify({ reason: 'user_requested' }),
+            });
+
+            expect(res.status).toBe(400);
+            const body = await res.json() as { error: string };
+            expect(body.error).toBe('Session already archived');
+        });
+
+        it('should accept optional originalError parameter', async () => {
+            const session = createTestSession(TEST_USER_ID, { id: 'archive-with-error-session' });
+            drizzleMock.seedData('sessions', [session]);
+
+            const body = await expectOk<{
+                success: boolean;
+                sessionId: string;
+            }>(await authRequest('/v1/sessions/archive-with-error-session/archive', {
+                method: 'POST',
+                body: JSON.stringify({
+                    reason: 'revival_failed',
+                    originalError: 'Connection refused: ECONNREFUSED',
+                }),
+            }));
+
+            expect(body.success).toBe(true);
+        });
+    });
 });

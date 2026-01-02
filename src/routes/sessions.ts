@@ -24,6 +24,9 @@ import {
     ListSessionMessagesResponseSchema,
     PaginatedMessagesQuerySchema,
     PaginatedMessagesResponseSchema,
+    SessionStateResponseSchema,
+    ArchiveSessionRequestSchema,
+    ArchiveSessionResponseSchema,
     BadRequestErrorSchema,
     NotFoundErrorSchema,
     UnauthorizedErrorSchema,
@@ -598,6 +601,180 @@ sessionRoutes.openapi(deleteSessionRoute, async (c) => {
     }
 
     return c.json({ success: true });
+});
+
+// ============================================================================
+// GET /v1/sessions/:id/state - Get Session State (HAP-734)
+// ============================================================================
+
+const getSessionStateRoute = createRoute({
+    method: 'get',
+    path: '/v1/sessions/:id/state',
+    request: {
+        params: SessionIdParamSchema,
+    },
+    responses: {
+        200: {
+            content: {
+                'application/json': {
+                    schema: SessionStateResponseSchema,
+                },
+            },
+            description: 'Session state information',
+        },
+        404: {
+            content: {
+                'application/json': {
+                    schema: NotFoundErrorSchema,
+                },
+            },
+            description: 'Session not found',
+        },
+        401: {
+            content: {
+                'application/json': {
+                    schema: UnauthorizedErrorSchema,
+                },
+            },
+            description: 'Unauthorized',
+        },
+    },
+    tags: ['Sessions'],
+    summary: 'Get session state',
+    description: 'Returns the current state of a session (active, stopped, or archived) for revival flow coordination.',
+});
+
+// @ts-expect-error - OpenAPI handler type inference doesn't carry Variables from middleware
+sessionRoutes.openapi(getSessionStateRoute, async (c) => {
+    const userId = (c as unknown as Context<{ Bindings: Env; Variables: AuthVariables }>).get('userId');
+    const { id } = c.req.valid('param');
+    const db = getDb(c.env.DB);
+
+    const session = await db.query.sessions.findFirst({
+        where: (sessions, { eq, and }) =>
+            and(eq(sessions.id, id), eq(sessions.accountId, userId)),
+    });
+
+    if (!session) {
+        return c.json({ error: 'Session not found' }, 404);
+    }
+
+    // Derive state from database fields
+    // Priority: archived > stopped > active
+    let state: 'active' | 'stopped' | 'archived';
+    if (session.archivedAt) {
+        state = 'archived';
+    } else if (!session.active || session.stoppedAt) {
+        state = 'stopped';
+    } else {
+        state = 'active';
+    }
+
+    return c.json({
+        sessionId: session.id,
+        state,
+        stoppedAt: session.stoppedAt ? session.stoppedAt.toISOString() : null,
+        stoppedReason: session.stoppedReason || null,
+        lastActivity: session.lastActiveAt ? session.lastActiveAt.toISOString() : null,
+    });
+});
+
+// ============================================================================
+// POST /v1/sessions/:id/archive - Archive Session (HAP-734)
+// ============================================================================
+
+const archiveSessionRoute = createRoute({
+    method: 'post',
+    path: '/v1/sessions/:id/archive',
+    request: {
+        params: SessionIdParamSchema,
+        body: {
+            content: {
+                'application/json': {
+                    schema: ArchiveSessionRequestSchema,
+                },
+            },
+        },
+    },
+    responses: {
+        200: {
+            content: {
+                'application/json': {
+                    schema: ArchiveSessionResponseSchema,
+                },
+            },
+            description: 'Session archived successfully',
+        },
+        404: {
+            content: {
+                'application/json': {
+                    schema: NotFoundErrorSchema,
+                },
+            },
+            description: 'Session not found',
+        },
+        400: {
+            content: {
+                'application/json': {
+                    schema: BadRequestErrorSchema,
+                },
+            },
+            description: 'Session already archived',
+        },
+        401: {
+            content: {
+                'application/json': {
+                    schema: UnauthorizedErrorSchema,
+                },
+            },
+            description: 'Unauthorized',
+        },
+    },
+    tags: ['Sessions'],
+    summary: 'Archive session',
+    description: 'Archives a session that failed revival attempts. Archived sessions are excluded from active session lists.',
+});
+
+// @ts-expect-error - OpenAPI handler type inference doesn't carry Variables from middleware
+sessionRoutes.openapi(archiveSessionRoute, async (c) => {
+    const userId = (c as unknown as Context<{ Bindings: Env; Variables: AuthVariables }>).get('userId');
+    const { id } = c.req.valid('param');
+    const { reason, originalError } = c.req.valid('json');
+    const db = getDb(c.env.DB);
+
+    // Verify session exists and belongs to user
+    const session = await db.query.sessions.findFirst({
+        where: (sessions, { eq, and }) =>
+            and(eq(sessions.id, id), eq(sessions.accountId, userId)),
+    });
+
+    if (!session) {
+        return c.json({ error: 'Session not found' }, 404);
+    }
+
+    // Check if already archived
+    if (session.archivedAt) {
+        return c.json({ error: 'Session already archived' }, 400);
+    }
+
+    const now = new Date();
+
+    // Archive the session
+    await db
+        .update(schema.sessions)
+        .set({
+            active: false,
+            archivedAt: now,
+            archiveReason: reason,
+            archiveError: originalError || null,
+        })
+        .where(eq(schema.sessions.id, id));
+
+    return c.json({
+        success: true,
+        sessionId: id,
+        archivedAt: now.toISOString(),
+    });
 });
 
 // ============================================================================

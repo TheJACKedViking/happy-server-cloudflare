@@ -433,6 +433,12 @@ export function createTestSession(accountId: string, overrides: Partial<{
     lastActiveAt: Date;
     createdAt: Date;
     updatedAt: Date;
+    // Session state fields (HAP-734)
+    stoppedAt: Date | null;
+    stoppedReason: string | null;
+    archivedAt: Date | null;
+    archiveReason: string | null;
+    archiveError: string | null;
 }> = {}) {
     const now = new Date();
     return {
@@ -447,6 +453,12 @@ export function createTestSession(accountId: string, overrides: Partial<{
         seq: 0,
         active: overrides.active ?? true,
         lastActiveAt: overrides.lastActiveAt ?? now,
+        // Session state fields (HAP-734)
+        stoppedAt: overrides.stoppedAt ?? null,
+        stoppedReason: overrides.stoppedReason ?? null,
+        archivedAt: overrides.archivedAt ?? null,
+        archiveReason: overrides.archiveReason ?? null,
+        archiveError: overrides.archiveError ?? null,
         createdAt: overrides.createdAt ?? now,
         updatedAt: overrides.updatedAt ?? now,
     };

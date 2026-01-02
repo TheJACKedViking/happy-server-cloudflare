@@ -391,6 +391,95 @@ export const PaginatedMessagesResponseSchema = z
     .openapi('PaginatedMessagesResponse');
 
 // ============================================================================
+// GET /v1/sessions/:id/state - Get Session State (HAP-734)
+// ============================================================================
+
+/**
+ * Session state values for revival flow
+ * - 'active': Session is running normally
+ * - 'stopped': Session has stopped (CLI disconnected, error, etc.)
+ * - 'archived': Session has been archived after failed revival
+ */
+export const SessionStateValueSchema = z.enum(['active', 'stopped', 'archived']);
+
+/**
+ * Schema for session state response
+ */
+export const SessionStateResponseSchema = z
+    .object({
+        sessionId: z.string().openapi({
+            description: 'Session identifier',
+            example: 'cmed556s4002bvb2020igg8jf',
+        }),
+        state: SessionStateValueSchema.openapi({
+            description: 'Current session state',
+            example: 'active',
+        }),
+        stoppedAt: z.string().nullable().openapi({
+            description: 'ISO timestamp when session stopped, null if not stopped',
+            example: '2024-01-15T10:30:00.000Z',
+        }),
+        stoppedReason: z.string().nullable().openapi({
+            description: 'Reason for stopping, null if not stopped',
+            example: 'Method not found',
+        }),
+        lastActivity: z.string().nullable().openapi({
+            description: 'ISO timestamp of last known activity',
+            example: '2024-01-15T10:25:00.000Z',
+        }),
+    })
+    .openapi('SessionStateResponse');
+
+// ============================================================================
+// POST /v1/sessions/:id/archive - Archive Session (HAP-734)
+// ============================================================================
+
+/**
+ * Archive reason values
+ */
+export const ArchiveReasonSchema = z.enum([
+    'revival_failed',
+    'user_requested',
+    'timeout',
+]);
+
+/**
+ * Schema for archive session request
+ */
+export const ArchiveSessionRequestSchema = z
+    .object({
+        reason: ArchiveReasonSchema.openapi({
+            description: 'Reason for archiving the session',
+            example: 'revival_failed',
+        }),
+        originalError: z.string().optional().openapi({
+            description: 'Original error message for debugging',
+            example: 'Method not found: /mcp/completion',
+        }),
+    })
+    .openapi('ArchiveSessionRequest');
+
+/**
+ * Schema for archive session response
+ */
+export const ArchiveSessionResponseSchema = z
+    .object({
+        success: z.boolean().openapi({
+            description: 'Whether the archive operation succeeded',
+            example: true,
+        }),
+        sessionId: z.string().openapi({
+            description: 'Session identifier',
+            example: 'cmed556s4002bvb2020igg8jf',
+        }),
+        archivedAt: z.string().openapi({
+            description: 'ISO timestamp when session was archived',
+            example: '2024-01-15T10:35:00.000Z',
+        }),
+    })
+    .openapi('ArchiveSessionResponse');
+
+// ============================================================================
 // Error Responses
 // ============================================================================
 
