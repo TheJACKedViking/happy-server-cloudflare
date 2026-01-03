@@ -221,6 +221,12 @@ export class ConnectionManager extends DurableObject<ConnectionManagerEnv> {
             return Response.json(this.getStats());
         }
 
+        // Usage limits endpoint (HAP-731)
+        // Returns cached plan limits from connected CLI sessions
+        if (path === '/usage-limits' && request.method === 'GET') {
+            return this.getUsageLimits();
+        }
+
         // Broadcast endpoint (for sending messages from Workers to connected clients)
         if (path === '/broadcast' && request.method === 'POST') {
             try {
@@ -776,6 +782,35 @@ export class ConnectionManager extends DurableObject<ConnectionManagerEnv> {
                     await this.processHandlerResult(ws, result, normalized.messageId);
                 }
                 break;
+
+            case 'update-usage-limits': {
+                // HAP-751: Store usage limits from CLI in DO storage
+                // This doesn't require database access - stores directly in DO storage
+                const result = await this.handleUsageLimitsUpdate(
+                    normalized.payload as {
+                        sessionLimit?: {
+                            id: string;
+                            label: string;
+                            percentageUsed: number;
+                            resetsAt: number | null;
+                            resetDisplayType: 'countdown' | 'datetime';
+                            description?: string;
+                        };
+                        weeklyLimits: Array<{
+                            id: string;
+                            label: string;
+                            percentageUsed: number;
+                            resetsAt: number | null;
+                            resetDisplayType: 'countdown' | 'datetime';
+                            description?: string;
+                        }>;
+                        limitsAvailable: boolean;
+                        provider?: string;
+                    }
+                );
+                await this.processHandlerResult(ws, result, normalized.messageId);
+                break;
+            }
 
             // =========================================================================
             // DELTA SYNC HANDLERS (HAP-441)
@@ -1505,6 +1540,126 @@ export class ConnectionManager extends DurableObject<ConnectionManagerEnv> {
         stats.oldestConnection = oldest;
 
         return stats;
+    }
+
+    /**
+     * Get cached usage limits (HAP-731)
+     *
+     * Returns plan limits data cached from connected CLI sessions.
+     * The CLI polls the AI provider for usage limits and sends updates via WebSocket.
+     * This data is stored in the Durable Object's persistent storage.
+     *
+     * @returns Response with plan limits or unavailable status
+     */
+    private async getUsageLimits(): Promise<Response> {
+        // Storage key for usage limits data
+        const USAGE_LIMITS_KEY = 'usage:limits';
+
+        try {
+            // Read from persistent storage
+            const cached = await this.ctx.storage.get<{
+                sessionLimit?: {
+                    id: string;
+                    label: string;
+                    percentageUsed: number;
+                    resetsAt: number | null;
+                    resetDisplayType: 'countdown' | 'datetime';
+                    description?: string;
+                };
+                weeklyLimits: Array<{
+                    id: string;
+                    label: string;
+                    percentageUsed: number;
+                    resetsAt: number | null;
+                    resetDisplayType: 'countdown' | 'datetime';
+                    description?: string;
+                }>;
+                lastUpdatedAt: number;
+                limitsAvailable: boolean;
+                provider?: string;
+            }>(USAGE_LIMITS_KEY);
+
+            if (cached) {
+                return Response.json(cached);
+            }
+
+            // No cached data available
+            return Response.json({
+                limitsAvailable: false,
+                weeklyLimits: [],
+                lastUpdatedAt: Date.now(),
+            });
+        } catch (error) {
+            console.error('[ConnectionManager] Failed to get usage limits:', error);
+            return Response.json({
+                limitsAvailable: false,
+                weeklyLimits: [],
+                lastUpdatedAt: Date.now(),
+            });
+        }
+    }
+
+    /**
+     * Handle usage limits update from CLI (HAP-751)
+     *
+     * Receives usage limits data from the CLI via WebSocket and stores it
+     * in the Durable Object's persistent storage for later retrieval via
+     * GET /v1/usage/limits endpoint.
+     *
+     * @param data - The usage limits data from the CLI
+     * @returns HandlerResult with success status
+     */
+    private async handleUsageLimitsUpdate(data: {
+        sessionLimit?: {
+            id: string;
+            label: string;
+            percentageUsed: number;
+            resetsAt: number | null;
+            resetDisplayType: 'countdown' | 'datetime';
+            description?: string;
+        };
+        weeklyLimits: Array<{
+            id: string;
+            label: string;
+            percentageUsed: number;
+            resetsAt: number | null;
+            resetDisplayType: 'countdown' | 'datetime';
+            description?: string;
+        }>;
+        limitsAvailable: boolean;
+        provider?: string;
+    }): Promise<HandlerResult> {
+        const USAGE_LIMITS_KEY = 'usage:limits';
+
+        try {
+            // Validate required fields
+            if (typeof data?.limitsAvailable !== 'boolean') {
+                return {
+                    response: { success: false, error: 'Invalid payload: limitsAvailable must be boolean' },
+                };
+            }
+
+            if (!Array.isArray(data.weeklyLimits)) {
+                return {
+                    response: { success: false, error: 'Invalid payload: weeklyLimits must be array' },
+                };
+            }
+
+            // Store in persistent storage with timestamp
+            await this.ctx.storage.put(USAGE_LIMITS_KEY, {
+                ...data,
+                lastUpdatedAt: Date.now(),
+            });
+
+            return {
+                response: { success: true },
+            };
+        } catch (error) {
+            console.error('[ConnectionManager] Failed to store usage limits:', error);
+            return {
+                response: { success: false, error: 'Failed to store usage limits' },
+            };
+        }
     }
 
     // =========================================================================

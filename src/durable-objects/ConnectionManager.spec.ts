@@ -179,6 +179,52 @@ describe('ConnectionManager', () => {
         });
     });
 
+    describe('fetch - Usage Limits endpoint (HAP-731, HAP-751)', () => {
+        it('should return empty limits when no data cached', async () => {
+            const state = createMockState();
+            (state.storage.get as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+            const cm = new ConnectionManager(state as unknown as DurableObjectState, mockEnv);
+
+            const request = new Request('https://do/usage-limits', { method: 'GET' });
+            const response = await cm.fetch(request);
+
+            expect(response.status).toBe(200);
+            const body = (await response.json()) as { limitsAvailable: boolean; weeklyLimits: unknown[]; lastUpdatedAt: number };
+            expect(body).toMatchObject({
+                limitsAvailable: false,
+                weeklyLimits: [],
+            });
+            expect(body.lastUpdatedAt).toBeDefined();
+        });
+
+        it('should return cached limits when available', async () => {
+            const state = createMockState();
+            const cachedLimits = {
+                limitsAvailable: true,
+                weeklyLimits: [
+                    {
+                        id: 'opus_tokens',
+                        label: 'Opus Tokens',
+                        percentageUsed: 75.5,
+                        resetsAt: 1735689600000,
+                        resetDisplayType: 'countdown' as const,
+                    },
+                ],
+                lastUpdatedAt: 1735600000000,
+                provider: 'anthropic',
+            };
+            (state.storage.get as ReturnType<typeof vi.fn>).mockResolvedValue(cachedLimits);
+            const cm = new ConnectionManager(state as unknown as DurableObjectState, mockEnv);
+
+            const request = new Request('https://do/usage-limits', { method: 'GET' });
+            const response = await cm.fetch(request);
+
+            expect(response.status).toBe(200);
+            const body = await response.json();
+            expect(body).toEqual(cachedLimits);
+        });
+    });
+
     describe('fetch - WebSocket upgrade', () => {
         it('should reject non-WebSocket requests to /websocket', async () => {
             const state = createMockState();
@@ -852,6 +898,248 @@ describe('ConnectionManager - RPC Routing', () => {
                 machineId,
             });
         });
+    });
+});
+
+// =========================================================================
+// USAGE LIMITS MESSAGE HANDLER TESTS (HAP-751)
+// =========================================================================
+
+describe('ConnectionManager - Usage Limits Handler', () => {
+    /**
+     * Creates a ConnectionManager with mock storage for testing handleUsageLimitsUpdate
+     */
+    function createMockStateForUsageLimits() {
+        const storage = new Map<string, unknown>();
+
+        return {
+            state: {
+                id: { toString: () => 'test-do-id' },
+                storage: {
+                    get: vi.fn(async (key: string) => storage.get(key)),
+                    put: vi.fn(async (key: string, value: unknown) => {
+                        storage.set(key, value);
+                    }),
+                    delete: vi.fn(async (key: string) => storage.delete(key)),
+                    list: vi.fn(),
+                    setAlarm: vi.fn().mockResolvedValue(undefined),
+                    getAlarm: vi.fn().mockResolvedValue(null),
+                    deleteAlarm: vi.fn().mockResolvedValue(undefined),
+                },
+                getWebSockets: vi.fn(() => []),
+                acceptWebSocket: vi.fn(),
+                setWebSocketAutoResponse: vi.fn(),
+                blockConcurrencyWhile: vi.fn(async (fn: () => Promise<void>) => fn()),
+            },
+            storage,
+        };
+    }
+
+    /**
+     * Helper to create an authenticated WebSocket for testing
+     */
+    function createAuthenticatedWs() {
+        const messages: string[] = [];
+        let attachment: unknown = null;
+
+        return {
+            ws: {
+                send: vi.fn((msg: string) => messages.push(msg)),
+                close: vi.fn(),
+                serializeAttachment: vi.fn((data: unknown) => {
+                    attachment = data;
+                }),
+                deserializeAttachment: vi.fn(() => attachment),
+            },
+            messages,
+            getAttachment: () => attachment,
+            setAttachment: (data: unknown) => {
+                attachment = data;
+            },
+        };
+    }
+
+    it('should store valid usage limits data', async () => {
+        const { state } = createMockStateForUsageLimits();
+        const cm = new ConnectionManager(state as unknown as DurableObjectState, mockEnv);
+
+        // Access handleUsageLimitsUpdate via webSocketMessage
+        const { ws, messages, setAttachment } = createAuthenticatedWs();
+
+        // Set up connection metadata as authenticated
+        setAttachment({
+            connectionId: 'conn-123',
+            userId: 'user-abc',
+            clientType: 'machine-scoped',
+            machineId: 'machine-xyz',
+            connectedAt: Date.now(),
+            lastActivityAt: Date.now(),
+            authState: 'authenticated',
+        });
+
+        // Simulate internal connections map
+        const testAccess = cm as unknown as { connections: Map<WebSocket, unknown> };
+        testAccess.connections.set(ws as unknown as WebSocket, {
+            connectionId: 'conn-123',
+            userId: 'user-abc',
+            clientType: 'machine-scoped',
+            machineId: 'machine-xyz',
+            connectedAt: Date.now(),
+            lastActivityAt: Date.now(),
+            authState: 'authenticated',
+        });
+
+        // Also set userId on the CM instance
+        (cm as unknown as { userId: string }).userId = 'user-abc';
+
+        const usageLimitsMessage = JSON.stringify({
+            event: 'update-usage-limits',
+            data: {
+                limitsAvailable: true,
+                weeklyLimits: [
+                    {
+                        id: 'opus_tokens',
+                        label: 'Opus Tokens',
+                        percentageUsed: 50,
+                        resetsAt: 1735689600000,
+                        resetDisplayType: 'countdown',
+                    },
+                ],
+                provider: 'anthropic',
+            },
+            ackId: 'ack-usage-1',
+        });
+
+        await cm.webSocketMessage(ws as unknown as WebSocket, usageLimitsMessage);
+
+        // Verify storage.put was called with the right key
+        expect(state.storage.put).toHaveBeenCalledWith(
+            'usage:limits',
+            expect.objectContaining({
+                limitsAvailable: true,
+                weeklyLimits: expect.arrayContaining([
+                    expect.objectContaining({
+                        id: 'opus_tokens',
+                        percentageUsed: 50,
+                    }),
+                ]),
+                lastUpdatedAt: expect.any(Number),
+            })
+        );
+
+        // Verify ack was sent
+        expect(messages.length).toBeGreaterThan(0);
+        const lastMessage = messages[messages.length - 1];
+        expect(lastMessage).toBeDefined();
+        const ackMessage = JSON.parse(lastMessage!);
+        expect(ackMessage.event).toBe('ack');
+        expect(ackMessage.ack).toEqual({ success: true });
+    });
+
+    it('should reject invalid usage limits payload - missing limitsAvailable', async () => {
+        const { state } = createMockStateForUsageLimits();
+        const cm = new ConnectionManager(state as unknown as DurableObjectState, mockEnv);
+
+        const { ws, messages, setAttachment } = createAuthenticatedWs();
+
+        setAttachment({
+            connectionId: 'conn-123',
+            userId: 'user-abc',
+            clientType: 'machine-scoped',
+            machineId: 'machine-xyz',
+            connectedAt: Date.now(),
+            lastActivityAt: Date.now(),
+            authState: 'authenticated',
+        });
+
+        const testAccess = cm as unknown as { connections: Map<WebSocket, unknown> };
+        testAccess.connections.set(ws as unknown as WebSocket, {
+            connectionId: 'conn-123',
+            userId: 'user-abc',
+            clientType: 'machine-scoped',
+            machineId: 'machine-xyz',
+            connectedAt: Date.now(),
+            lastActivityAt: Date.now(),
+            authState: 'authenticated',
+        });
+
+        (cm as unknown as { userId: string }).userId = 'user-abc';
+
+        // Missing limitsAvailable field
+        const invalidMessage = JSON.stringify({
+            event: 'update-usage-limits',
+            data: {
+                weeklyLimits: [],
+            },
+            ackId: 'ack-invalid-1',
+        });
+
+        await cm.webSocketMessage(ws as unknown as WebSocket, invalidMessage);
+
+        // Verify storage.put was NOT called
+        expect(state.storage.put).not.toHaveBeenCalled();
+
+        // Verify error response was sent
+        expect(messages.length).toBeGreaterThan(0);
+        const lastMessage = messages[messages.length - 1];
+        expect(lastMessage).toBeDefined();
+        const ackMessage = JSON.parse(lastMessage!);
+        expect(ackMessage.event).toBe('ack');
+        expect(ackMessage.ack.success).toBe(false);
+        expect(ackMessage.ack.error).toContain('limitsAvailable');
+    });
+
+    it('should reject invalid usage limits payload - missing weeklyLimits', async () => {
+        const { state } = createMockStateForUsageLimits();
+        const cm = new ConnectionManager(state as unknown as DurableObjectState, mockEnv);
+
+        const { ws, messages, setAttachment } = createAuthenticatedWs();
+
+        setAttachment({
+            connectionId: 'conn-123',
+            userId: 'user-abc',
+            clientType: 'machine-scoped',
+            machineId: 'machine-xyz',
+            connectedAt: Date.now(),
+            lastActivityAt: Date.now(),
+            authState: 'authenticated',
+        });
+
+        const testAccess = cm as unknown as { connections: Map<WebSocket, unknown> };
+        testAccess.connections.set(ws as unknown as WebSocket, {
+            connectionId: 'conn-123',
+            userId: 'user-abc',
+            clientType: 'machine-scoped',
+            machineId: 'machine-xyz',
+            connectedAt: Date.now(),
+            lastActivityAt: Date.now(),
+            authState: 'authenticated',
+        });
+
+        (cm as unknown as { userId: string }).userId = 'user-abc';
+
+        // Missing weeklyLimits field
+        const invalidMessage = JSON.stringify({
+            event: 'update-usage-limits',
+            data: {
+                limitsAvailable: true,
+            },
+            ackId: 'ack-invalid-2',
+        });
+
+        await cm.webSocketMessage(ws as unknown as WebSocket, invalidMessage);
+
+        // Verify storage.put was NOT called
+        expect(state.storage.put).not.toHaveBeenCalled();
+
+        // Verify error response was sent
+        expect(messages.length).toBeGreaterThan(0);
+        const lastMessage = messages[messages.length - 1];
+        expect(lastMessage).toBeDefined();
+        const ackMessage = JSON.parse(lastMessage!);
+        expect(ackMessage.event).toBe('ack');
+        expect(ackMessage.ack.success).toBe(false);
+        expect(ackMessage.ack.error).toContain('weeklyLimits');
     });
 });
 
