@@ -335,6 +335,32 @@ export function buildDeleteSessionUpdate(
 }
 
 /**
+ * Build an 'archive-session' update payload.
+ *
+ * Sent when a session is archived (excluded from active lists but not deleted).
+ * Clients should update UI to show the session as archived.
+ */
+export function buildArchiveSessionUpdate(
+    sessionId: string,
+    archivedAt: number,
+    archiveReason: 'revival_failed' | 'user_requested' | 'timeout',
+    updateSeq: number,
+    updateId: string
+): UpdatePayload {
+    return {
+        id: updateId,
+        seq: updateSeq,
+        body: {
+            t: 'archive-session',
+            sid: sessionId,
+            archivedAt,
+            archiveReason,
+        },
+        createdAt: Date.now(),
+    };
+}
+
+/**
  * Build an 'update-account' update payload.
  *
  * Sent when user account settings or profile is updated.

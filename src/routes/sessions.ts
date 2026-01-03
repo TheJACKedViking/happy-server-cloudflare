@@ -7,7 +7,7 @@ import { createId } from '@/utils/id';
 // Encoding utilities for base64/hex operations (Workers-compatible)
 import * as privacyKit from '@/lib/privacy-kit-shim';
 import { eq, desc, lt, gt, and, sql } from 'drizzle-orm';
-import { getEventRouter, buildDeleteSessionUpdate } from '@/lib/eventRouter';
+import { getEventRouter, buildDeleteSessionUpdate, buildArchiveSessionUpdate } from '@/lib/eventRouter';
 import {
     ListSessionsResponseSchema,
     PaginatedSessionsQuerySchema,
@@ -769,6 +769,30 @@ sessionRoutes.openapi(archiveSessionRoute, async (c) => {
             archiveError: originalError || null,
         })
         .where(eq(schema.sessions.id, id));
+
+    // Allocate sequence number for the update event
+    const [account] = await db
+        .update(schema.accounts)
+        .set({ seq: sql`${schema.accounts.seq} + 1` })
+        .where(eq(schema.accounts.id, userId))
+        .returning({ seq: schema.accounts.seq });
+
+    // Emit archive-session event to connected clients
+    const connectionManager = c.env.CONNECTION_MANAGER;
+    if (connectionManager) {
+        const updateId = createId();
+        const eventRouter = getEventRouter({ CONNECTION_MANAGER: connectionManager });
+        await eventRouter.emitUpdate({
+            userId,
+            payload: buildArchiveSessionUpdate(
+                id,
+                now.getTime(),
+                reason,
+                account?.seq ?? 0,
+                updateId
+            ),
+        });
+    }
 
     return c.json({
         success: true,

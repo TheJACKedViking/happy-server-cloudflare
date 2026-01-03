@@ -16,6 +16,7 @@ import {
     buildNewMessageUpdate,
     buildUpdateSessionUpdate,
     buildDeleteSessionUpdate,
+    buildArchiveSessionUpdate,
     buildUpdateAccountUpdate,
     buildNewMachineUpdate,
     buildUpdateMachineUpdate,
@@ -383,6 +384,46 @@ describe('Update Event Builders', () => {
             expect(payload.seq).toBe(10);
             expect(payload.body.t).toBe('delete-session');
             expect(payload.body.sid).toBe('session-123');
+        });
+    });
+
+    describe('buildArchiveSessionUpdate', () => {
+        it('should build archive session payload with all fields', () => {
+            const archivedAt = Date.now();
+            const payload = buildArchiveSessionUpdate(
+                'session-456',
+                archivedAt,
+                'revival_failed',
+                15,
+                'update-2'
+            );
+
+            expect(payload.id).toBe('update-2');
+            expect(payload.seq).toBe(15);
+            expect(payload.body.t).toBe('archive-session');
+            expect(payload.body.sid).toBe('session-456');
+            expect(payload.body.archivedAt).toBe(archivedAt);
+            expect(payload.body.archiveReason).toBe('revival_failed');
+            expect(payload.createdAt).toBeDefined();
+        });
+
+        it('should accept different archive reasons', () => {
+            const reasons: Array<'revival_failed' | 'user_requested' | 'timeout'> = [
+                'revival_failed',
+                'user_requested',
+                'timeout',
+            ];
+
+            for (const reason of reasons) {
+                const payload = buildArchiveSessionUpdate(
+                    'session-123',
+                    Date.now(),
+                    reason,
+                    1,
+                    'update-id'
+                );
+                expect(payload.body.archiveReason).toBe(reason);
+            }
         });
     });
 
