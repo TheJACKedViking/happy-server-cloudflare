@@ -10,6 +10,7 @@ import {
     UnauthorizedErrorSchema,
     NotFoundErrorSchema,
     InternalErrorSchema,
+    GetUsageLimitsResponseSchema,
 } from '@/schemas/usage';
 
 /**
@@ -17,15 +18,17 @@ import {
  */
 interface Env {
     DB: D1Database;
+    CONNECTION_MANAGER?: DurableObjectNamespace;
 }
 
 /**
  * Usage routes module
  *
- * Implements usage query endpoint for token/cost tracking:
+ * Implements usage endpoints for token/cost tracking:
  * - POST /v1/usage/query - Query aggregated usage data with optional filters
+ * - GET /v1/usage/limits - Get cached plan limits from connected CLI sessions
  *
- * The endpoint supports filtering by session, time range, and aggregation period.
+ * The endpoints support filtering by session, time range, and aggregation period.
  * All routes require authentication.
  */
 const usageRoutes = new OpenAPIHono<{ Bindings: Env }>();
@@ -234,6 +237,112 @@ usageRoutes.openapi(queryUsageRoute, async (c) => {
     } catch (error) {
         console.error('Failed to query usage reports:', error);
         return c.json({ error: 'Failed to query usage reports' }, 500);
+    }
+});
+
+// ============================================================================
+// GET /v1/usage/limits - Get Plan Limits
+// ============================================================================
+
+/**
+ * Get cached usage limits from connected CLI sessions
+ *
+ * Returns plan limits data that was most recently received from an active CLI session.
+ * The CLI polls the AI provider for usage limits and sends updates via WebSocket.
+ * This endpoint retrieves the cached limits for the authenticated user.
+ *
+ * @see HAP-728 - Parent issue for usage limits feature
+ * @see HAP-731 - This endpoint implementation
+ */
+const getUsageLimitsRoute = createRoute({
+    method: 'get',
+    path: '/v1/usage/limits',
+    responses: {
+        200: {
+            content: {
+                'application/json': {
+                    schema: GetUsageLimitsResponseSchema,
+                },
+            },
+            description: 'Plan limits data from connected CLI session',
+        },
+        401: {
+            content: {
+                'application/json': {
+                    schema: UnauthorizedErrorSchema,
+                },
+            },
+            description: 'Unauthorized',
+        },
+        500: {
+            content: {
+                'application/json': {
+                    schema: InternalErrorSchema,
+                },
+            },
+            description: 'Internal server error',
+        },
+    },
+    tags: ['Usage'],
+    summary: 'Get plan limits',
+    description: 'Returns cached plan limits from connected CLI sessions. Returns limitsAvailable=false when no CLI is connected or no usage data is available.',
+});
+
+// @ts-expect-error - OpenAPI handler type inference doesn't carry Variables from middleware
+usageRoutes.openapi(getUsageLimitsRoute, async (c) => {
+    const userId = (c as unknown as Context<{ Bindings: Env; Variables: AuthVariables }>).get('userId');
+
+    try {
+        // Check if CONNECTION_MANAGER is configured
+        if (!c.env.CONNECTION_MANAGER) {
+            // Return unavailable response when Durable Objects not configured
+            return c.json({
+                limitsAvailable: false,
+                weeklyLimits: [],
+                lastUpdatedAt: Date.now(),
+            });
+        }
+
+        // Get the user's Durable Object to check for cached limits
+        const doId = c.env.CONNECTION_MANAGER.idFromName(userId);
+        const stub = c.env.CONNECTION_MANAGER.get(doId);
+
+        // Request usage limits from the Durable Object
+        const response = await stub.fetch(new Request('https://do/usage-limits'));
+
+        if (!response.ok) {
+            // If DO returns non-OK (e.g., 404 for no data), return unavailable
+            return c.json({
+                limitsAvailable: false,
+                weeklyLimits: [],
+                lastUpdatedAt: Date.now(),
+            });
+        }
+
+        // Parse and return the cached limits
+        const limits = await response.json();
+
+        // Validate the response has the expected shape
+        if (limits && typeof limits === 'object' && 'limitsAvailable' in limits) {
+            return c.json(limits);
+        }
+
+        // Fallback if response format is unexpected
+        return c.json({
+            limitsAvailable: false,
+            weeklyLimits: [],
+            lastUpdatedAt: Date.now(),
+        });
+    } catch (error) {
+        console.error('Failed to get usage limits:', error);
+
+        // Return unavailable on any error rather than 500
+        // This provides a graceful degradation for the client
+        return c.json({
+            limitsAvailable: false,
+            weeklyLimits: [],
+            lastUpdatedAt: Date.now(),
+        });
     }
 });
 

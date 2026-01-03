@@ -138,3 +138,67 @@ export const InternalErrorSchema = z
         }),
     })
     .openapi('UsageInternalError');
+
+// ============================================================================
+// GET /v1/usage/limits - Get Plan Limits
+// ============================================================================
+
+/**
+ * Schema for a single usage limit entry
+ * Mirrors the UsageLimitSchema from @happy/protocol for OpenAPI documentation
+ */
+const UsageLimitItemSchema = z
+    .object({
+        id: z.string().min(1).openapi({
+            description: 'Unique identifier for this limit type',
+            example: 'opus_tokens',
+        }),
+        label: z.string().min(1).openapi({
+            description: 'Human-readable label for display',
+            example: 'Opus Tokens',
+        }),
+        percentageUsed: z.number().min(0).max(100).openapi({
+            description: 'Percentage of limit used (0-100)',
+            example: 75.5,
+        }),
+        resetsAt: z.number().nullable().openapi({
+            description: 'Unix timestamp (ms) when this limit resets, null if no reset',
+            example: 1735689600000,
+        }),
+        resetDisplayType: z.enum(['countdown', 'datetime']).openapi({
+            description: 'How to display the reset time in UI',
+            example: 'countdown',
+        }),
+        description: z.string().optional().openapi({
+            description: 'Optional description for additional context',
+            example: 'Monthly Opus token limit',
+        }),
+    })
+    .openapi('UsageLimitItem');
+
+/**
+ * Schema for GET /v1/usage/limits response
+ * Matches the PlanLimitsResponseSchema from @happy/protocol
+ */
+export const GetUsageLimitsResponseSchema = z
+    .object({
+        sessionLimit: UsageLimitItemSchema.optional().openapi({
+            description: 'Session limit if applicable (e.g., concurrent session count)',
+        }),
+        weeklyLimits: z.array(UsageLimitItemSchema).openapi({
+            description: 'Weekly/rolling limits (tokens, requests, etc.)',
+        }),
+        lastUpdatedAt: z.number().openapi({
+            description: 'Unix timestamp (ms) when limits were last fetched/updated',
+            example: 1735689600000,
+        }),
+        limitsAvailable: z.boolean().openapi({
+            description: 'Whether limit information is available from the provider',
+            example: true,
+        }),
+        provider: z.string().optional().openapi({
+            description: 'Optional provider identifier (e.g., "anthropic", "openai")',
+            example: 'anthropic',
+        }),
+    })
+    .openapi('GetUsageLimitsResponse');
