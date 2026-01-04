@@ -121,7 +121,20 @@ This project uses **oxlint** exclusively (no ESLint). The configuration is in `o
 ### Key Features
 
 - **JS Plugins**: Custom rules from `@happy/lint-rules` package
+- **Type-Aware Linting**: Enabled via `--type-aware` flag for TypeScript-aware analysis
 - **Performance**: oxlint is 50-100x faster than ESLint
+
+### Commands
+
+```bash
+# Run linting (with type-aware analysis)
+yarn lint
+
+# Run linting with auto-fix
+yarn lint:fix
+```
+
+Both commands use the `--type-aware` flag which enables TypeScript-aware linting rules that can detect issues requiring type information.
 
 ### Configuration (`oxlint.json`)
 
