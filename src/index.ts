@@ -1,4 +1,5 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
+import * as Sentry from '@sentry/cloudflare';
 import { logger } from '@/middleware/logger';
 import { cors } from '@/middleware/cors';
 import { timing, addServerTiming } from '@/middleware/timing';
@@ -7,6 +8,7 @@ import { errorHandler } from '@/middleware/error';
 import { bodySizeLimits } from '@/middleware/bodySize';
 import { initAuth, cleanupExpiredTokens } from '@/lib/auth';
 import { getMasterSecret, validateEnv } from '@/config/env';
+import { buildSentryOptions } from '@/lib/sentry';
 import authRoutes from '@/routes/auth';
 import testRoutes from '@/routes/test/privacy-kit-test';
 import sessionsRoutes from '@/routes/sessions';
@@ -117,6 +119,18 @@ interface Env {
      * @optional - if not set, CI metrics endpoint is disabled
      */
     CI_METRICS_API_KEY?: string;
+
+    /**
+     * Sentry Data Source Name (DSN) for error monitoring
+     * @required for Sentry integration
+     */
+    SENTRY_DSN?: string;
+
+    /**
+     * Cloudflare version metadata for Sentry release tracking
+     * Automatically populated by Cloudflare Workers
+     */
+    CF_VERSION_METADATA?: { id: string };
 }
 
 /**
@@ -448,9 +462,12 @@ export { app };
  * Scheduled event handler for cron triggers
  * Runs daily at 2 AM UTC to clean up expired token blacklist entries
  *
+ * Note: Sentry is automatically initialized by the withSentry wrapper for scheduled handlers.
+ * Error capture and flushing is handled by the wrapper.
+ *
  * @param event - Scheduled event from Cloudflare
  * @param env - Environment bindings
- * @param _ctx - Execution context (unused but required by Workers API)
+ * @param ctx - Execution context
  *
  * @see HAP-504 for implementation details
  * @see HAP-452 for token blacklist architecture
@@ -458,31 +475,59 @@ export { app };
 async function scheduled(event: ScheduledEvent, env: Env, _ctx: ExecutionContext): Promise<void> {
     console.log(`[Scheduled] Token blacklist cleanup triggered at ${new Date(event.scheduledTime).toISOString()}`);
 
+    // Set Sentry context for this scheduled job
+    Sentry.setTag('handler', 'scheduled');
+    Sentry.setTag('task', 'token-blacklist-cleanup');
+    Sentry.setContext('scheduled', {
+        scheduledTime: new Date(event.scheduledTime).toISOString(),
+        cron: event.cron,
+    });
+
     try {
         const deleted = await cleanupExpiredTokens(env.DB);
         console.log(`[Scheduled] Removed ${deleted} expired blacklist entries`);
     } catch (error) {
+        // Capture error to Sentry with additional context
+        Sentry.captureException(error);
         console.error('[Scheduled] Token blacklist cleanup failed:', error);
         // Don't rethrow - let the worker complete gracefully
         // Failed cleanups will be retried on next cron run
     }
+    // Note: Sentry flush is handled automatically by withSentry wrapper
 }
 
 /**
- * Export the Worker with both fetch and scheduled handlers
+ * Export the Worker with Sentry instrumentation
  *
  * @remarks
- * Hono apps are compatible with Cloudflare Workers via their `fetch` method.
- * The scheduled handler runs token blacklist cleanup (HAP-504).
+ * The worker is wrapped with Sentry.withSentry() for automatic error capture,
+ * performance tracing, and context propagation. This provides:
+ *
+ * - Automatic exception capture from Hono's onError handler
+ * - Performance tracing for all requests
+ * - Request context attached to all Sentry events
+ * - Automatic event flushing via waitUntil
+ *
+ * The scheduled handler is wrapped separately for cron job monitoring.
+ *
+ * @see https://docs.sentry.io/platforms/javascript/guides/cloudflare/
  */
-export default {
-    /**
-     * HTTP request handler (Hono app)
-     */
-    fetch: app.fetch,
+export default Sentry.withSentry(
+    (env: Env) => buildSentryOptions(env, {
+        // Override tracesSampleRate based on environment
+        // Production: 10% sampling to manage costs
+        // Development: 100% sampling for debugging
+        tracesSampleRate: env.ENVIRONMENT === 'development' ? 1.0 : 0.1,
+    }),
+    {
+        /**
+         * HTTP request handler (Hono app)
+         */
+        fetch: app.fetch,
 
-    /**
-     * Scheduled event handler
-     */
-    scheduled,
-};
+        /**
+         * Scheduled event handler
+         */
+        scheduled,
+    } as ExportedHandler<Env>
+);

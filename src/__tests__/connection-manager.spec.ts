@@ -290,12 +290,12 @@ function createMockEnv() {
 // TESTS
 // =============================================================================
 
-import { ConnectionManager, ConnectionManagerEnv } from '@/durable-objects/ConnectionManager';
+import { ConnectionManagerBase, ConnectionManagerEnv, type ConnectionManagerInstance } from '@/durable-objects/ConnectionManager';
 
 describe('ConnectionManager Durable Object', () => {
     let ctx: DurableObjectState;
     let env: ConnectionManagerEnv;
-    let connectionManager: ConnectionManager;
+    let connectionManager: ConnectionManagerInstance;
 
     beforeEach(() => {
         vi.clearAllMocks();
@@ -314,7 +314,7 @@ describe('ConnectionManager Durable Object', () => {
 
         ctx = createMockDurableObjectState();
         env = createMockEnv();
-        connectionManager = new ConnectionManager(ctx, env);
+        connectionManager = new ConnectionManagerBase(ctx, env);
     });
 
     afterEach(() => {
@@ -327,7 +327,7 @@ describe('ConnectionManager Durable Object', () => {
 
     describe('Constructor & Initialization', () => {
         it('should initialize with empty connections', () => {
-            const cm = new ConnectionManager(ctx, env);
+            const cm = new ConnectionManagerBase(ctx, env);
             expect(cm).toBeDefined();
         });
 
@@ -346,14 +346,14 @@ describe('ConnectionManager Durable Object', () => {
             existingWs.deserializeAttachment = vi.fn(() => metadata);
 
             const ctxWithWs = createMockDurableObjectState([existingWs]);
-            const cm = new ConnectionManager(ctxWithWs, env);
+            const cm = new ConnectionManagerBase(ctxWithWs, env);
 
             expect(ctxWithWs.getWebSockets).toHaveBeenCalled();
             expect(cm).toBeDefined();
         });
 
         it('should set up auto-response for ping/pong', () => {
-            new ConnectionManager(ctx, env);
+            new ConnectionManagerBase(ctx, env);
             expect(ctx.setWebSocketAutoResponse).toHaveBeenCalled();
         });
     });
@@ -759,7 +759,7 @@ describe('ConnectionManager Durable Object', () => {
             }
 
             const ctxWithManyWs = createMockDurableObjectState(existingWsSockets);
-            const cm = new ConnectionManager(ctxWithManyWs, env);
+            const cm = new ConnectionManagerBase(ctxWithManyWs, env);
 
             const request = new Request('http://localhost/websocket?token=valid-token', {
                 method: 'GET',
@@ -780,7 +780,7 @@ describe('ConnectionManager Durable Object', () => {
 
     describe('WebSocket Message Handling', () => {
         let testWs: WebSocket & { _messages: string[]; _attachment: unknown };
-        let cm: ConnectionManager;
+        let cm: ConnectionManagerInstance;
 
         beforeEach(async () => {
             testWs = createMockWebSocket('test-ws');
@@ -796,7 +796,7 @@ describe('ConnectionManager Durable Object', () => {
             testWs.deserializeAttachment = vi.fn(() => testWs._attachment);
 
             const ctxWithWs = createMockDurableObjectState([testWs]);
-            cm = new ConnectionManager(ctxWithWs, env);
+            cm = new ConnectionManagerBase(ctxWithWs, env);
         });
 
         it('should handle ping message', async () => {
@@ -1062,7 +1062,7 @@ describe('ConnectionManager Durable Object', () => {
                 userWs.deserializeAttachment = vi.fn(() => userWs._attachment);
 
                 const ctxWithBoth = createMockDurableObjectState([machineWs, userWs]);
-                const cmBoth = new ConnectionManager(ctxWithBoth, env);
+                const cmBoth = new ConnectionManagerBase(ctxWithBoth, env);
 
                 const message = JSON.stringify({
                     event: 'rpc-call',
@@ -1104,7 +1104,7 @@ describe('ConnectionManager Durable Object', () => {
                 machineWs.deserializeAttachment = vi.fn(() => machineWs._attachment);
 
                 const ctxWithBoth = createMockDurableObjectState([userWs, machineWs]);
-                const cmBoth = new ConnectionManager(ctxWithBoth, env);
+                const cmBoth = new ConnectionManagerBase(ctxWithBoth, env);
 
                 const message = JSON.stringify({
                     event: 'rpc-request',
@@ -1145,7 +1145,7 @@ describe('ConnectionManager Durable Object', () => {
                 (ws2 as unknown as { deserializeAttachment: () => ConnectionMetadata }).deserializeAttachment = () => metadata2;
 
                 const ctxWithBoth = createMockDurableObjectState([ws1, ws2]);
-                const cmBoth = new ConnectionManager(ctxWithBoth, env);
+                const cmBoth = new ConnectionManagerBase(ctxWithBoth, env);
 
                 // Note: The rpc-response handler uses 'data' as the payload (not 'ack')
                 // because 'ack' + 'ackId' triggers the acknowledgement skip logic
@@ -1190,7 +1190,7 @@ describe('ConnectionManager Durable Object', () => {
                 ws2.deserializeAttachment = vi.fn(() => ws2._attachment);
 
                 const ctxWithBoth = createMockDurableObjectState([ws1, ws2]);
-                const cmBoth = new ConnectionManager(ctxWithBoth, env);
+                const cmBoth = new ConnectionManagerBase(ctxWithBoth, env);
 
                 const message = JSON.stringify({
                     event: 'broadcast',
@@ -1231,7 +1231,7 @@ describe('ConnectionManager Durable Object', () => {
                 mobileWs.deserializeAttachment = vi.fn(() => mobileWs._attachment);
 
                 const ctxWithBoth = createMockDurableObjectState([cliWs, mobileWs]);
-                const cmBoth = new ConnectionManager(ctxWithBoth, env);
+                const cmBoth = new ConnectionManagerBase(ctxWithBoth, env);
 
                 const message = JSON.stringify({
                     event: 'custom-event',
@@ -1270,7 +1270,7 @@ describe('ConnectionManager Durable Object', () => {
                 sessionWs.deserializeAttachment = vi.fn(() => sessionWs._attachment);
 
                 const ctxWithBoth = createMockDurableObjectState([mobileWs, sessionWs]);
-                const cmBoth = new ConnectionManager(ctxWithBoth, env);
+                const cmBoth = new ConnectionManagerBase(ctxWithBoth, env);
 
                 const message = JSON.stringify({
                     event: 'custom-event',
@@ -1309,7 +1309,7 @@ describe('ConnectionManager Durable Object', () => {
                 machineWs.deserializeAttachment = vi.fn(() => machineWs._attachment);
 
                 const ctxWithBoth = createMockDurableObjectState([mobileWs, machineWs]);
-                const cmBoth = new ConnectionManager(ctxWithBoth, env);
+                const cmBoth = new ConnectionManagerBase(ctxWithBoth, env);
 
                 const message = JSON.stringify({
                     event: 'custom-event',
@@ -1342,7 +1342,7 @@ describe('ConnectionManager Durable Object', () => {
             ws.deserializeAttachment = vi.fn(() => ws._attachment);
 
             const ctxWithWs = createMockDurableObjectState([ws]);
-            const cm = new ConnectionManager(ctxWithWs, env);
+            const cm = new ConnectionManagerBase(ctxWithWs, env);
 
             await cm.webSocketClose(ws, 1000, 'Normal closure', true);
 
@@ -1377,7 +1377,7 @@ describe('ConnectionManager Durable Object', () => {
             userWs.deserializeAttachment = vi.fn(() => userWs._attachment);
 
             const ctxWithBoth = createMockDurableObjectState([machineWs, userWs]);
-            const cm = new ConnectionManager(ctxWithBoth, env);
+            const cm = new ConnectionManagerBase(ctxWithBoth, env);
 
             await cm.webSocketClose(machineWs, 1000, 'Disconnect', true);
 
@@ -1414,7 +1414,7 @@ describe('ConnectionManager Durable Object', () => {
             });
 
             const ctxWithWs = createMockDurableObjectState([ws]);
-            const cm = new ConnectionManager(ctxWithWs, env);
+            const cm = new ConnectionManagerBase(ctxWithWs, env);
 
             // Should not throw
             await cm.webSocketClose(ws, 1000, 'Normal closure', true);
@@ -1440,7 +1440,7 @@ describe('ConnectionManager Durable Object', () => {
             ws.deserializeAttachment = vi.fn(() => ws._attachment);
 
             const ctxWithWs = createMockDurableObjectState([ws]);
-            const cm = new ConnectionManager(ctxWithWs, env);
+            const cm = new ConnectionManagerBase(ctxWithWs, env);
 
             await cm.webSocketError(ws, new Error('Test error'));
 
@@ -1464,7 +1464,7 @@ describe('ConnectionManager Durable Object', () => {
             });
 
             const ctxWithWs = createMockDurableObjectState([ws]);
-            const cm = new ConnectionManager(ctxWithWs, env);
+            const cm = new ConnectionManagerBase(ctxWithWs, env);
 
             // Should not throw
             await cm.webSocketError(ws, new Error('Test error'));
@@ -1479,7 +1479,7 @@ describe('ConnectionManager Durable Object', () => {
         let ws1: WebSocket & { _messages: string[]; _attachment: unknown };
         let ws2: WebSocket & { _messages: string[]; _attachment: unknown };
         let ws3: WebSocket & { _messages: string[]; _attachment: unknown };
-        let cmMulti: ConnectionManager;
+        let cmMulti: ConnectionManagerInstance;
 
         beforeEach(() => {
             // User-scoped connection
@@ -1524,7 +1524,7 @@ describe('ConnectionManager Durable Object', () => {
             ws3.deserializeAttachment = vi.fn(() => ws3._attachment);
 
             const ctxMulti = createMockDurableObjectState([ws1, ws2, ws3]);
-            cmMulti = new ConnectionManager(ctxMulti, env);
+            cmMulti = new ConnectionManagerBase(ctxMulti, env);
         });
 
         it('should broadcast to all connections with filter type: all', async () => {
@@ -1697,7 +1697,7 @@ describe('ConnectionManager Durable Object', () => {
             ws3.deserializeAttachment = vi.fn(() => ws3._attachment);
 
             const ctxMulti = createMockDurableObjectState([ws1, ws2, ws3]);
-            const cm = new ConnectionManager(ctxMulti, env);
+            const cm = new ConnectionManagerBase(ctxMulti, env);
 
             const request = new Request('http://localhost/stats', { method: 'GET' });
             const response = await cm.fetch(request);
@@ -1739,7 +1739,7 @@ describe('ConnectionManager Durable Object', () => {
             (userWs as unknown as { deserializeAttachment: () => ConnectionMetadata }).deserializeAttachment = () => userMetadata;
 
             const ctxWithUser = createMockDurableObjectState([userWs]);
-            const cm = new ConnectionManager(ctxWithUser, env);
+            const cm = new ConnectionManagerBase(ctxWithUser, env);
 
             // Now connect a machine
             const request = new Request(
@@ -1789,7 +1789,7 @@ describe('ConnectionManager Durable Object', () => {
             ws.deserializeAttachment = vi.fn(() => ws._attachment);
 
             const ctxWithWs = createMockDurableObjectState([ws]);
-            const cm = new ConnectionManager(ctxWithWs, env);
+            const cm = new ConnectionManagerBase(ctxWithWs, env);
 
             // Send an ack response message
             const message = JSON.stringify({
@@ -1828,7 +1828,7 @@ describe('ConnectionManager Durable Object', () => {
             ws.deserializeAttachment = vi.fn(() => ws._attachment);
 
             const ctxWithWs = createMockDurableObjectState([ws]);
-            const cm = new ConnectionManager(ctxWithWs, env);
+            const cm = new ConnectionManagerBase(ctxWithWs, env);
 
             const message = JSON.stringify({
                 event: 'update-metadata',
@@ -1883,7 +1883,7 @@ describe('ConnectionManager Durable Object', () => {
             ws2.deserializeAttachment = vi.fn(() => ws2._attachment);
 
             const ctxWithBoth = createMockDurableObjectState([ws1, ws2]);
-            const cm = new ConnectionManager(ctxWithBoth, env);
+            const cm = new ConnectionManagerBase(ctxWithBoth, env);
 
             const message = JSON.stringify({
                 event: 'update-metadata',
@@ -1930,7 +1930,7 @@ describe('ConnectionManager Durable Object', () => {
             ws2.deserializeAttachment = vi.fn(() => ws2._attachment);
 
             const ctxWithBoth = createMockDurableObjectState([ws1, ws2]);
-            const cm = new ConnectionManager(ctxWithBoth, env);
+            const cm = new ConnectionManagerBase(ctxWithBoth, env);
 
             const message = JSON.stringify({
                 event: 'session-alive',
@@ -1954,7 +1954,7 @@ describe('ConnectionManager Durable Object', () => {
             ws.deserializeAttachment = vi.fn(() => null);
 
             const ctxWithWs = createMockDurableObjectState([ws]);
-            const cm = new ConnectionManager(ctxWithWs, env);
+            const cm = new ConnectionManagerBase(ctxWithWs, env);
 
             // Manually add the WebSocket to the internal map without metadata
             // This simulates a corrupted state
@@ -1993,7 +1993,7 @@ describe('ConnectionManager Durable Object', () => {
             ws2.deserializeAttachment = vi.fn(() => ws2._attachment);
 
             const ctxWithBoth = createMockDurableObjectState([ws1, ws2]);
-            const cm = new ConnectionManager(ctxWithBoth, env);
+            const cm = new ConnectionManagerBase(ctxWithBoth, env);
 
             // Should not throw even when one send fails
             const request = new Request('http://localhost/broadcast', {
@@ -2028,7 +2028,7 @@ describe('ConnectionManager Durable Object', () => {
             });
 
             const ctxWithWs = createMockDurableObjectState([ws]);
-            const cm = new ConnectionManager(ctxWithWs, env);
+            const cm = new ConnectionManagerBase(ctxWithWs, env);
 
             // Send invalid JSON to trigger sendError
             await cm.webSocketMessage(ws, 'invalid-json');
@@ -2045,7 +2045,7 @@ describe('ConnectionManager Durable Object', () => {
         it('should not log in production environment', async () => {
             const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
             const prodEnv = { ...env, ENVIRONMENT: 'production' as const };
-            const cm = new ConnectionManager(ctx, prodEnv);
+            const cm = new ConnectionManagerBase(ctx, prodEnv);
 
             const request = new Request('http://localhost/websocket?token=valid-token', {
                 method: 'GET',

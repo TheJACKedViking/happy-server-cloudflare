@@ -1,6 +1,6 @@
 name = "happy-server-workers"
 main = "src/index.ts"
-compatibility_date = "2025-11-17"
+compatibility_date = "2026-01-01"
 compatibility_flags = ["nodejs_compat"]
 
 # Cloudflare Account ID
@@ -15,12 +15,23 @@ command = ""
 #############################
 [env.dev]
 name = "happy-server-workers-dev"
+preview_urls = false
+workers_dev = false
+
 # DEBUG_RPC_ROUTING: Set to "true" to enable verbose RPC routing debug logs (HAP-297)
-vars = { ENVIRONMENT = "development", DEBUG_RPC_ROUTING = "false", HAPPY_APP_URL = "https://happy-dev.enflamemedia.com" }
+[env.dev.vars]
+ENVIRONMENT = "development"
+DEBUG_RPC_ROUTING = "false"
+HAPPY_APP_URL = "https://happy-dev.enflamemedia.com"
+SENTRY_DSN = "https://af2fba0efa2a35d5d45cb73a04913f8c@o4509604128817152.ingest.us.sentry.io/4510650134691840"
+
+# Version metadata binding for Sentry releases
+[env.dev.version_metadata]
+binding = "CF_VERSION_METADATA"
 # Custom domain routing
-routes = [
-    { pattern = "happy-api-dev.enflamemedia.com", custom_domain = true }
-]
+[[env.dev.routes]]
+pattern = "happy-api-dev.enflamemedia.com"
+custom_domain = true
 
 # D1 Database binding (development)
 [[env.dev.d1_databases]]
@@ -86,13 +97,27 @@ persist = true
 #############################
 [env.prod]
 name = "happy-server-workers-prod"
+preview_urls = false
+workers_dev = false
+
+
 # DEBUG_RPC_ROUTING: Set to "true" to enable verbose RPC routing debug logs (HAP-297)
 # Warning: Keep disabled in production to avoid performance impact
-vars = { ENVIRONMENT = "production", DEBUG_RPC_ROUTING = "false", GITHUB_CLIENT_ID = "Ov23liIbGVFF64wNeSAN", GITHUB_REDIRECT_URL = "https://happy-api.enflamemedia.com/v1/connect/github/callback", HAPPY_APP_URL = "https://happy.enflamemedia.com" }
+[env.prod.vars]
+ENVIRONMENT = "production"
+DEBUG_RPC_ROUTING = "false"
+GITHUB_CLIENT_ID = "Ov23liIbGVFF64wNeSAN"
+GITHUB_REDIRECT_URL = "https://happy-api.enflamemedia.com/v1/connect/github/callback"
+HAPPY_APP_URL = "https://happy.enflamemedia.com"
+SENTRY_DSN = "https://af2fba0efa2a35d5d45cb73a04913f8c@o4509604128817152.ingest.us.sentry.io/4510650134691840"
+
+# Version metadata binding for Sentry releases
+[env.prod.version_metadata]
+binding = "CF_VERSION_METADATA"
 # Custom domain routing
-routes = [
-    { pattern = "happy-api.enflamemedia.com", custom_domain = true }
-]
+[[env.prod.routes]]
+pattern = "happy-api.enflamemedia.com"
+custom_domain = true
 
 # D1 Database binding (production)
 [[env.prod.d1_databases]]

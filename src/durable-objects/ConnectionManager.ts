@@ -15,6 +15,7 @@
  */
 
 import { DurableObject } from 'cloudflare:workers';
+import * as Sentry from '@sentry/cloudflare';
 import type {
     ConnectionMetadata,
     WebSocketAuthHandshake,
@@ -39,6 +40,7 @@ import { verifyToken, initAuth } from '@/lib/auth';
 import { getDb } from '@/db/client';
 import { getMasterSecret } from '@/config/env';
 import type { HandlerResult, HandlerContext } from './handlers';
+import { buildSentryOptions, instrumentDurableObjectWithSentry } from '@/lib/sentry';
 import {
     handleSessionMetadataUpdate,
     handleSessionStateUpdate,
@@ -78,6 +80,12 @@ export interface ConnectionManagerEnv {
      * Set to 'true' to enable verbose logging of RPC routing
      */
     DEBUG_RPC_ROUTING?: string;
+
+    /** Sentry DSN for error monitoring */
+    SENTRY_DSN?: string;
+
+    /** Cloudflare version metadata for Sentry releases */
+    CF_VERSION_METADATA?: { id: string };
 }
 
 /**
@@ -99,7 +107,7 @@ export interface ConnectionManagerEnv {
  *                     webSocketClose() → cleanup
  * ```
  */
-export class ConnectionManager extends DurableObject<ConnectionManagerEnv> {
+class ConnectionManagerBase extends DurableObject<ConnectionManagerEnv> {
     /**
      * Active connections map, keyed by WebSocket reference
      * Reconstructed from attachments on wake from hibernation
@@ -120,6 +128,7 @@ export class ConnectionManager extends DurableObject<ConnectionManagerEnv> {
      * Whether auth has been initialized for this instance
      */
     private authInitialized = false;
+
 
     /**
      * Auth timeout alarms for pending connections (HAP-360)
@@ -1130,17 +1139,31 @@ export class ConnectionManager extends DurableObject<ConnectionManagerEnv> {
      * Handle WebSocket errors
      *
      * Called when a WebSocket encounters an error.
-     * Logs the error and closes the connection.
+     * Logs the error, captures to Sentry (via instrumentDurableObjectWithSentry wrapper),
+     * and closes the connection.
      *
      * @param ws - The WebSocket that errored
      * @param error - The error that occurred
      */
     override async webSocketError(ws: WebSocket, error: unknown): Promise<void> {
         const metadata = this.connections.get(ws);
+        const connectionId = metadata?.connectionId || 'unknown';
+
         console.error(
-            `[ConnectionManager] WebSocket error for connection ${metadata?.connectionId || 'unknown'}:`,
+            `[ConnectionManager] WebSocket error for connection ${connectionId}:`,
             error
         );
+
+        // Set Sentry context for this error
+        // Note: Error capture is handled automatically by instrumentDurableObjectWithSentry
+        Sentry.setContext('connection', {
+            connectionId,
+            clientType: metadata?.clientType,
+            sessionId: metadata?.sessionId,
+            machineId: metadata?.machineId,
+            authState: metadata?.authState,
+        });
+        Sentry.setTag('operation', 'webSocketError');
 
         // Clean up the connection
         this.connections.delete(ws);
@@ -1150,6 +1173,9 @@ export class ConnectionManager extends DurableObject<ConnectionManagerEnv> {
         } catch {
             // Already closed, ignore
         }
+
+        // Re-throw error so instrumentDurableObjectWithSentry can capture it
+        throw error;
     }
 
     /**
@@ -1838,7 +1864,7 @@ export class ConnectionManager extends DurableObject<ConnectionManagerEnv> {
      * Handle a dead-lettered alarm (HAP-479)
      *
      * Called when an alarm has exhausted all retry attempts.
-     * Logs the failure for debugging and stores in DO storage for later analysis.
+     * Logs the failure for debugging, captures to Sentry, and stores in DO storage.
      *
      * @param originalScheduledAt - When the alarm was originally scheduled
      * @param attempts - Number of retry attempts made
@@ -1865,6 +1891,21 @@ export class ConnectionManager extends DurableObject<ConnectionManagerEnv> {
 
         // Log prominently for monitoring/alerting
         console.error('[ConnectionManager] ALARM DEAD LETTER:', JSON.stringify(deadLetterEntry));
+
+        // Capture to Sentry as a critical error
+        // Note: Sentry is initialized by instrumentDurableObjectWithSentry wrapper
+        Sentry.setTag('alarm.context', context);
+        Sentry.captureMessage('Alarm dead lettered after max retries', {
+            level: 'fatal',
+            extra: {
+                deadLetterId: deadLetterEntry.id,
+                originalScheduledAt: deadLetterEntry.originalScheduledAt,
+                deadLetteredAt: deadLetterEntry.deadLetteredAt,
+                attempts: deadLetterEntry.attempts,
+                finalError: deadLetterEntry.finalError,
+                context: deadLetterEntry.context,
+            },
+        });
 
         // Store in DO storage for later analysis
         // Use timestamp-based key for chronological ordering
@@ -2041,3 +2082,31 @@ export class ConnectionManager extends DurableObject<ConnectionManagerEnv> {
         return updatedMetadata;
     }
 }
+
+/**
+ * ConnectionManager Durable Object with Sentry instrumentation
+ *
+ * This exports the ConnectionManagerBase class wrapped with Sentry's
+ * instrumentDurableObjectWithSentry, which automatically:
+ * - Captures exceptions from fetch, alarm, webSocketMessage, webSocketClose, webSocketError
+ * - Adds performance tracing for all methods
+ * - Handles event flushing via waitUntil
+ *
+ * @see https://docs.sentry.io/platforms/javascript/guides/cloudflare/
+ */
+export const ConnectionManager = instrumentDurableObjectWithSentry(
+    (env: ConnectionManagerEnv) => buildSentryOptions(env),
+    ConnectionManagerBase
+);
+
+/**
+ * Type alias for ConnectionManager instances
+ * Use this for type annotations instead of `ConnectionManager` which is now a value
+ */
+export type ConnectionManagerInstance = InstanceType<typeof ConnectionManager>;
+
+/**
+ * Export the base class for testing purposes
+ * Tests may need to instantiate the class directly without Sentry instrumentation
+ */
+export { ConnectionManagerBase };

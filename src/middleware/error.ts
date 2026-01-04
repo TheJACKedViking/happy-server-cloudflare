@@ -2,6 +2,12 @@ import type { ErrorHandler } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { HTTPException } from 'hono/http-exception';
 import { AppError, type ErrorCode, createSafeError, getErrorStatusCode } from '@happy/errors';
+import {
+    setSentryContext,
+    setSentryTag,
+    captureException,
+    addBreadcrumb,
+} from '@/lib/sentry';
 
 /**
  * Maps AppError error codes to appropriate HTTP status codes.
@@ -80,6 +86,12 @@ function getRequestId(c: { var?: { requestId?: string } }): string {
  * AppError instances are considered safe (messages are designed for users).
  * Other errors get generic messages in production while full details are logged.
  *
+ * Sentry Integration:
+ * - Adds request context (path, method, requestId) to all events
+ * - Tags errors with error codes for filtering in Sentry dashboard
+ * - Only captures 5xx errors to Sentry (4xx are expected client errors)
+ * - Adds breadcrumbs for debugging error context
+ *
  * @param err - The error that was thrown (AppError, HTTPException, or Error)
  * @param c - Hono context object
  * @returns JSON error response with consistent structure
@@ -92,11 +104,31 @@ export const errorHandler: ErrorHandler = (err, c) => {
     const env = c.env as { ENVIRONMENT?: string } | undefined;
     const isDevelopment = env?.ENVIRONMENT === 'development';
 
+    // Add request context to Sentry
+    setSentryContext('request', {
+        requestId,
+        path: c.req.path,
+        method: c.req.method,
+        url: c.req.url,
+    });
+
+    // Add breadcrumb for error occurrence
+    addBreadcrumb({
+        category: 'error',
+        message: `Error in ${c.req.method} ${c.req.path}`,
+        level: 'error',
+        data: { requestId },
+    });
+
     // Handle AppError instances from @happy/errors
     // AppError messages are designed to be user-safe
     if (AppError.isAppError(err)) {
         const status = getHttpStatusFromErrorCode(err.code);
         const message = err.message || 'Internal server error';
+
+        // Tag the error code for Sentry filtering
+        setSentryTag('error.code', err.code);
+        setSentryTag('error.canTryAgain', String(err.canTryAgain));
 
         // Log based on status severity
         if (status >= 500) {
@@ -108,12 +140,27 @@ export const errorHandler: ErrorHandler = (err, c) => {
                 ...(err.cause ? { cause: err.cause.message } : {}),
                 ...(err.context ? { context: err.context } : {}),
             });
+
+            // Capture 5xx errors to Sentry (these are unexpected server errors)
+            captureException(err, {
+                tags: {
+                    'error.type': 'AppError',
+                    'error.code': err.code,
+                    'http.status_code': String(status),
+                },
+                extra: {
+                    requestId,
+                    context: err.context,
+                },
+                level: 'error',
+            });
         } else {
             console.warn(`[${requestId}] Client error (AppError):`, {
                 code: err.code,
                 message,
                 status,
             });
+            // Don't capture 4xx to Sentry - these are expected client errors
         }
 
         // Return structured error response matching happy-server format
@@ -148,6 +195,22 @@ export const errorHandler: ErrorHandler = (err, c) => {
 
     // Get appropriate status code
     const status = getErrorStatusCode(err) as ContentfulStatusCode;
+
+    // Capture unexpected errors to Sentry (5xx errors)
+    if (status >= 500) {
+        setSentryTag('error.type', err instanceof HTTPException ? 'HTTPException' : 'UnknownError');
+
+        captureException(err, {
+            tags: {
+                'http.status_code': String(status),
+            },
+            extra: {
+                requestId,
+                safeError,
+            },
+            level: 'error',
+        });
+    }
 
     return c.json(safeError, status);
 };
