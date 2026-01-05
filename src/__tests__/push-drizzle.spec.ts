@@ -133,6 +133,7 @@ function createThenableInsertMock(store: Map<string, unknown[]>, tableName: stri
             onConflictDoNothing: () => builder,
             onConflictDoUpdate: () => builder,
             // Make thenable so it can be awaited directly
+            // oxlint-disable-next-line unicorn/no-thenable -- Required for Drizzle thenable mock
             then: <TResult1, TResult2 = never>(
                 onfulfilled?: ((value: unknown[]) => TResult1 | PromiseLike<TResult1>) | null,
                 onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
@@ -198,6 +199,7 @@ function createThenableUpdateMock(store: Map<string, unknown[]>, tableName: stri
                 return updated;
             },
             // Make thenable
+            // oxlint-disable-next-line unicorn/no-thenable -- Required for Drizzle thenable mock
             then: <TResult1, TResult2 = never>(
                 onfulfilled?: ((value: unknown) => TResult1 | PromiseLike<TResult1>) | null,
                 onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
@@ -256,6 +258,7 @@ function createThenableDeleteMock(store: Map<string, unknown[]>, tableName: stri
                 return deleted;
             },
             // Make thenable
+            // oxlint-disable-next-line unicorn/no-thenable -- Required for Drizzle thenable mock
             then: <TResult1, TResult2 = never>(
                 onfulfilled?: ((value: unknown) => TResult1 | PromiseLike<TResult1>) | null,
                 onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
