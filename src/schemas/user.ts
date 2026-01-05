@@ -161,6 +161,18 @@ export const BadRequestErrorSchema = z
     })
     .openapi('BadRequestError');
 
+/**
+ * Schema for 403 Forbidden error (friend request permission denied)
+ */
+export const ForbiddenErrorSchema = z
+    .object({
+        error: z.string().openapi({
+            description: 'Error message explaining why the request was denied',
+            example: 'User is not accepting friend requests',
+        }),
+    })
+    .openapi('ForbiddenError');
+
 // ============================================================================
 // Friend Management Routes
 // ============================================================================

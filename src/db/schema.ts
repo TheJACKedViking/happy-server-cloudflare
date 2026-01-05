@@ -55,10 +55,16 @@ export const accounts = sqliteTable(
         lastName: text('lastName'),
         username: text('username').unique(),
 
-        // Privacy settings (HAP-727)
+        // Privacy settings (HAP-727, HAP-768)
         showOnlineStatus: integer('showOnlineStatus', { mode: 'boolean' })
             .notNull()
             .default(true),
+        // "public" | "friends-only"
+        profileVisibility: text('profileVisibility').notNull().default('public'),
+        // "anyone" | "friends-of-friends" | "none"
+        friendRequestPermission: text('friendRequestPermission')
+            .notNull()
+            .default('anyone'),
     },
     (table) => ({
         publicKeyIdx: uniqueIndex('Account_publicKey_key').on(table.publicKey),

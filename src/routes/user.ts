@@ -19,6 +19,7 @@ import {
     UnauthorizedErrorSchema,
     NotFoundErrorSchema,
     BadRequestErrorSchema,
+    ForbiddenErrorSchema,
     FriendRequestBodySchema,
     FriendOperationResponseSchema,
     FriendListResponseSchema,
@@ -168,6 +169,51 @@ async function relationshipSet(
             lastNotifiedAt: null,
         });
     }
+}
+
+/**
+ * Check if two users share at least one mutual friend.
+ *
+ * A mutual friend is a user who:
+ * 1. Is friends with the requester (bidirectional friend relationship)
+ * 2. Is friends with the target (bidirectional friend relationship)
+ *
+ * This is used to enforce the "friends-of-friends" privacy setting for friend requests.
+ *
+ * @param db - Database instance
+ * @param requesterId - The user sending the friend request
+ * @param targetId - The user receiving the friend request
+ * @returns true if at least one mutual friend exists
+ */
+async function hasMutualFriend(
+    db: ReturnType<typeof getDb>,
+    requesterId: string,
+    targetId: string
+): Promise<boolean> {
+    // Get all friends of the requester (where status is 'friend')
+    const requesterFriends = await db.query.userRelationships.findMany({
+        where: (rels, { eq, and }) =>
+            and(eq(rels.fromUserId, requesterId), eq(rels.status, 'friend')),
+        columns: { toUserId: true },
+    });
+
+    if (requesterFriends.length === 0) {
+        return false;
+    }
+
+    const requesterFriendIds = requesterFriends.map((r) => r.toUserId);
+
+    // Check if any of the requester's friends are also friends with the target
+    const mutualFriend = await db.query.userRelationships.findFirst({
+        where: (rels, { eq, and, inArray }) =>
+            and(
+                eq(rels.fromUserId, targetId),
+                inArray(rels.toUserId, requesterFriendIds),
+                eq(rels.status, 'friend')
+            ),
+    });
+
+    return mutualFriend !== null;
 }
 
 /**
@@ -464,6 +510,14 @@ const addFriendRoute = createRoute({
             },
             description: 'Unauthorized',
         },
+        403: {
+            content: {
+                'application/json': {
+                    schema: ForbiddenErrorSchema,
+                },
+            },
+            description: 'Friend request denied due to privacy settings',
+        },
     },
     tags: ['Friends'],
     summary: 'Add friend or accept friend request',
@@ -473,6 +527,11 @@ const addFriendRoute = createRoute({
 - If target has a pending request to you → both become friends
 - If your current status is none or rejected → create a new friend request
 - Otherwise, no change is made
+
+**Privacy settings (HAP-787):**
+- If target's friendRequestPermission is "none" → 403 Forbidden
+- If target's friendRequestPermission is "friends-of-friends" → 403 if no mutual friends exist
+- If target's friendRequestPermission is "anyone" → allowed (default)
 
 **Notifications:**
 - When sending a request: target receives a friend_request feed notification (with 24h cooldown)
@@ -500,7 +559,7 @@ userRoutes.openapi(addFriendRoute, async (c) => {
         return c.json({ user: null });
     }
 
-    // Fetch both users
+    // Fetch both users (include friendRequestPermission for target)
     const currentUser = await db.query.accounts.findFirst({
         where: (accts, { eq: e }) => e(accts.id, userId),
         columns: { id: true, firstName: true, lastName: true, username: true },
@@ -508,7 +567,13 @@ userRoutes.openapi(addFriendRoute, async (c) => {
 
     const targetUser = await db.query.accounts.findFirst({
         where: (accts, { eq: e }) => e(accts.id, targetUserId),
-        columns: { id: true, firstName: true, lastName: true, username: true },
+        columns: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            username: true,
+            friendRequestPermission: true,
+        },
     });
 
     if (!currentUser || !targetUser) {
@@ -520,6 +585,7 @@ userRoutes.openapi(addFriendRoute, async (c) => {
     const targetUserRelationship = await getRelationshipStatus(db, targetUserId, userId);
 
     // Case 1: Target has a pending request to current user - accept it
+    // No permission check needed - they already sent us a request
     if (targetUserRelationship === 'requested') {
         // Accept the friend request - update both to friends
         await relationshipSet(db, targetUserId, userId, 'friend');
@@ -570,6 +636,24 @@ userRoutes.openapi(addFriendRoute, async (c) => {
 
     // Case 2: If status is none or rejected, create a new request
     if (currentUserRelationship === 'none' || currentUserRelationship === 'rejected') {
+        // Check target user's friendRequestPermission setting (HAP-787)
+        const permission = targetUser.friendRequestPermission ?? 'anyone';
+
+        if (permission === 'none') {
+            return c.json({ error: 'User is not accepting friend requests' }, 403);
+        }
+
+        if (permission === 'friends-of-friends') {
+            const hasMutual = await hasMutualFriend(db, userId, targetUserId);
+            if (!hasMutual) {
+                return c.json(
+                    { error: 'User only accepts friend requests from friends of friends' },
+                    403
+                );
+            }
+        }
+
+        // Permission granted (either "anyone" or passed friends-of-friends check)
         await relationshipSet(db, userId, targetUserId, 'requested');
 
         // If other side is in none state, set it to pending
