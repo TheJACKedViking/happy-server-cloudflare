@@ -2,7 +2,7 @@
  * WebSocket Message Handlers for Database Updates
  *
  * Handles incoming WebSocket messages that require database persistence.
- * Mirrors the handlers from happy-server/sources/app/api/socket/*.ts
+ * Mirrors the handlers from apps/server/docker/sources/app/api/socket/*.ts
  *
  * @module durable-objects/handlers
  * @see HAP-283 - Implement WebSocket Message Handlers for Database Updates
@@ -1512,6 +1512,32 @@ export async function handleRequestUpdatesSince(
         });
     }
 
+    // Fix #8: Query for archived (inactive) sessions since sessionsSeq
+    // These are sessions that became inactive (archived) during the disconnect window
+    const deletedSessionUpdates = await ctx.db
+        .select()
+        .from(sessions)
+        .where(
+            and(
+                eq(sessions.accountId, ctx.userId),
+                sql`${sessions.seq} > ${sessionsSeq}`,
+                eq(sessions.active, false)
+            )
+        )
+        .limit(100);
+
+    for (const session of deletedSessionUpdates) {
+        updates.push({
+            type: 'delete-session',
+            data: {
+                t: 'delete-session',
+                sid: session.id,
+            },
+            seq: session.seq,
+            createdAt: session.updatedAt.getTime(),
+        });
+    }
+
     // Query machines updated since machinesSeq
     const machineUpdates = await ctx.db
         .select()
@@ -1574,6 +1600,7 @@ export async function handleRequestUpdatesSince(
             updates,
             counts: {
                 sessions: sessionUpdates.length,
+                deletedSessions: deletedSessionUpdates.length,
                 machines: machineUpdates.length,
                 artifacts: artifactUpdates.length,
             },

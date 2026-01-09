@@ -139,7 +139,7 @@ wrangler secret delete SECRET_NAME --env prod
 
 ## Secret Rotation
 
-See `happy-server/docs/SECRET-ROTATION.md` for detailed rotation procedures.
+See `apps/server/docker/docs/SECRET-ROTATION.md` for detailed rotation procedures.
 
 ### Quick Rotation Steps
 

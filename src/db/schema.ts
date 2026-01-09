@@ -2,7 +2,7 @@
  * Drizzle ORM Schema for Happy Server (D1/SQLite)
  *
  * Migrated from Prisma/PostgreSQL schema
- * Reference: happy-server/prisma/schema.prisma
+ * Reference: apps/server/docker/prisma/schema.prisma
  *
  * Key Migrations:
  * - PostgreSQL Bytes → SQLite blob (buffer mode)

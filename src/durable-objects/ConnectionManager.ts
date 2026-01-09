@@ -154,6 +154,9 @@ class ConnectionManagerBase extends DurableObject<ConnectionManagerEnv> {
         this.connections = new Map();
         this.config = { ...DEFAULT_CONFIG };
 
+        // Track machine IDs that were pending-auth during hibernation for status cleanup (Fix #10)
+        const machineIdsToMarkOffline: string[] = [];
+
         // Restore connections from hibernation
         // When the DO wakes up, WebSocket connections are still active
         // but our in-memory state is gone. Reconstruct from attachments.
@@ -163,6 +166,11 @@ class ConnectionManagerBase extends DurableObject<ConnectionManagerEnv> {
                 // HAP-360: If connection was pending-auth when we hibernated, close it
                 // The auth timeout would have expired during hibernation anyway
                 if (attachment.authState === 'pending-auth') {
+                    // Fix #10: Track machine IDs for status update if this was a machine connection
+                    // that never completed auth (shouldn't happen often, but handle gracefully)
+                    if (attachment.machineId && attachment.userId) {
+                        machineIdsToMarkOffline.push(attachment.machineId);
+                    }
                     try {
                         ws.close(CloseCode.AUTH_TIMEOUT, 'Authentication timeout (hibernation recovery)');
                     } catch {
@@ -178,6 +186,26 @@ class ConnectionManagerBase extends DurableObject<ConnectionManagerEnv> {
                 }
             }
         });
+
+        // Fix #10: Update machine status for any machines that were pending-auth
+        // This is fire-and-forget since we're in constructor
+        if (machineIdsToMarkOffline.length > 0 && this.userId) {
+            const userId = this.userId;
+            // Schedule async cleanup without blocking constructor
+            this.ctx.waitUntil((async () => {
+                const db = getDb(this.env.DB);
+                for (const machineId of machineIdsToMarkOffline) {
+                    try {
+                        await db
+                            .update(machines)
+                            .set({ active: false, lastActiveAt: new Date() })
+                            .where(and(eq(machines.id, machineId), eq(machines.accountId, userId)));
+                    } catch (err) {
+                        console.error('[ConnectionManager] Failed to update machine status on hibernation recovery:', err);
+                    }
+                }
+            })());
+        }
 
         // Set up auto-response for ping/pong during hibernation
         // This keeps connections alive without waking the DO
@@ -1028,28 +1056,34 @@ class ConnectionManagerBase extends DurableObject<ConnectionManagerEnv> {
                     this.logRpcRouting('RPC response routing', {
                         ackId: normalized.messageId,
                         senderClientType: metadata?.clientType,
+                        ackPayload: typeof normalized.ack,
                     });
 
-                    // HAP-689: CRITICAL FIX - Two issues were causing RPC responses to fail:
-                    //
-                    // 1. Event name mismatch: The app's sessionRPC uses emitWithAck which
-                    //    expects responses with event: 'ack', NOT event: 'rpc-response'.
-                    //
-                    // 2. Response format mismatch: The CLI sends just the encrypted response
-                    //    string in the 'ack' field, but the app expects an object with format:
-                    //    { ok: boolean, result: string, cancelled?: boolean, requestId?: string }
+                    // HAP-689 + Fix #4: RPC response format handling
                     //
                     // The CLI sends: { event: 'rpc-response', ackId, ack: encryptedString }
-                    // The app expects: { event: 'ack', ackId, ack: { ok: true, result: encryptedString } }
+                    // The app's emitWithAck expects: { event: 'ack', ackId, ack: responseData }
                     //
-                    // Note: The app will decrypt the 'result' field and then check the decrypted
-                    // content for errors like SESSION_NOT_ACTIVE.
+                    // The response format depends on how the CLI formatted it:
+                    // - If ack is already an object with 'ok' field, pass it through
+                    // - If ack is a string (encrypted response), wrap it in { ok: true, result: string }
+                    //
+                    // This handles both legacy CLI responses and newer formatted responses.
+                    let ackPayload: unknown;
+                    if (typeof normalized.ack === 'object' && normalized.ack !== null && 'ok' in (normalized.ack as object)) {
+                        // Already in expected format, pass through
+                        ackPayload = normalized.ack;
+                    } else {
+                        // Wrap raw response in expected format
+                        ackPayload = { ok: true, result: normalized.ack };
+                    }
+
                     const filter = { type: 'all' as const };
                     const delivered = this.broadcastClientMessage(
                         {
-                            event: 'ack', // Fix #1: Changed from 'rpc-response' to 'ack'
+                            event: 'ack',
                             ackId: normalized.messageId,
-                            ack: { ok: true, result: normalized.ack }, // Fix #2: Wrap in expected format
+                            ack: ackPayload,
                         },
                         filter
                     );
@@ -1163,6 +1197,11 @@ class ConnectionManagerBase extends DurableObject<ConnectionManagerEnv> {
      */
     override async webSocketClose(ws: WebSocket, code: number, reason: string, wasClean: boolean): Promise<void> {
         const metadata = this.connections.get(ws);
+
+        // Fix #3: Clean up any orphaned pendingAuthAlarms entry for this connection
+        if (metadata?.connectionId) {
+            this.pendingAuthAlarms.delete(metadata.connectionId);
+        }
 
         if (metadata) {
             // Log disconnection
@@ -1473,6 +1512,9 @@ class ConnectionManagerBase extends DurableObject<ConnectionManagerEnv> {
      *
      * Returns the tag for O(1) lookup, or null if the filter requires iteration.
      *
+     * Fix #11: user-scoped-only now returns null to use iteration-based filtering
+     * which properly excludes pending-auth connections via matchesFilter().
+     *
      * @param filter - Filter to convert to tag
      * @returns Tag string for simple filters, null for complex filters
      */
@@ -1484,7 +1526,10 @@ class ConnectionManagerBase extends DurableObject<ConnectionManagerEnv> {
 
         switch (filter.type) {
             case 'user-scoped-only':
-                return 'type:user-scoped';
+                // Fix #11: Cannot use tag-based lookup because 'type:user-scoped' tag
+                // doesn't exclude pending-auth connections. Fall back to iteration
+                // which uses matchesFilter() to properly filter by auth state.
+                return null;
 
             case 'session':
                 return `session:${filter.sessionId.slice(0, 50)}`;

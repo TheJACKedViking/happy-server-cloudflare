@@ -13,8 +13,10 @@
     "typecheck": "tsc --noEmit",
     "lint": "oxlint src --config oxlint.json --type-aware",
     "lint:fix": "oxlint src --config oxlint.json --type-aware --fix",
-    "format": "prettier --write \"src/**/*.ts\"",
+    "format": "oxfmt src/",
+    "format:check": "oxfmt --check src/",
     "test": "vitest run",
+    "clean": "rm -rf .wrangler/state/v3/cache",
     "test:watch": "vitest",
     "db:generate": "npx drizzle-kit generate",
     "db:migrate": "./scripts/db-init.sh migrate --env dev --remote",
@@ -45,7 +47,7 @@
   "license": "MIT",
   "private": true,
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260103.0",
+    "@cloudflare/workers-types": "^4.20260108.0",
     "@happy/lint-rules": "workspace:*",
     "@types/jpeg-js": "^0.3.7",
     "@types/node": "^25.0.3",
@@ -54,13 +56,13 @@
     "@vitest/coverage-v8": "^4.0.16",
     "drizzle-kit": "^0.31.8",
     "knip": "^5.80.0",
-    "oxlint": "^1.37.0",
+    "oxlint": "^1.38.0",
     "oxlint-tsgolint": "^0.10.1",
     "prettier": "^3.7.4",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vitest": "^4.0.16",
-    "wrangler": "^4.56.0"
+    "wrangler": "^4.57.0"
   },
   "dependencies": {
     "@fingerprintjs/fingerprintjs-pro-server-api": "^6.10.0",

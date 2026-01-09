@@ -9,7 +9,7 @@
  * - Symmetric encryption with authenticated encryption (encrypt-then-MAC)
  *
  * @see HAP-286 for AI token encryption implementation
- * @see happy-server/sources/modules/encrypt.ts for original implementation
+ * @see apps/server/docker/sources/modules/encrypt.ts for original implementation
  */
 
 import nacl from 'tweetnacl';

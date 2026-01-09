@@ -50,7 +50,7 @@ curl http://localhost:8787/openapi.json
 ## Project Structure
 
 ```
-happy-server-workers/
+apps/server/workers/
 ├── src/
 │   ├── index.ts              # Main entry point
 │   ├── routes/               # API route handlers
