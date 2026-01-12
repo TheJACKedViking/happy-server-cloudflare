@@ -62,6 +62,15 @@ HAPPY_MASTER_SECRET=your-32-byte-hex-secret-here
 TEST_AUTH_SECRET=test-secret-for-local-development-only
 
 # ============================================================
+# EMAIL DELIVERY (HAP-805)
+# ============================================================
+
+# Resend API key for sending transactional emails
+# Get from: https://resend.com/api-keys
+# Used for sending session share invitation emails
+# RESEND_API_KEY=
+
+# ============================================================
 # FINGERPRINT.JS PRO
 # ============================================================
 

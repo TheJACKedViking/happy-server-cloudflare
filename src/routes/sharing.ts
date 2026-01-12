@@ -4,7 +4,9 @@ import { authMiddleware, type AuthVariables } from '@/middleware/auth';
 import { getDb } from '@/db/client';
 import { schema } from '@/db/schema';
 import { createId } from '@/utils/id';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, sql } from 'drizzle-orm';
+import { checkRateLimit, type RateLimitConfig } from '@/lib/rate-limit';
+import { sendInvitationEmail } from '@/lib/email';
 import {
     SessionIdParamSchema,
     ShareIdParamSchema,
@@ -40,6 +42,12 @@ import {
 interface Env {
     DB: D1Database;
     RATE_LIMIT_KV?: KVNamespace;
+    /** Resend API key for sending invitation emails (HAP-805) */
+    RESEND_API_KEY?: string;
+    /** Base URL for the Happy app (for building invitation links) */
+    HAPPY_APP_URL?: string;
+    /** Current environment (development/production) */
+    ENVIRONMENT?: string;
 }
 
 /**
@@ -50,6 +58,32 @@ const RATE_LIMIT = {
     MAX_INVITATIONS_PER_HOUR: 10,
     /** Rate limit window in seconds */
     WINDOW_SECONDS: 3600,
+};
+
+/**
+ * Rate limiting configuration for invitation acceptance endpoint (HAP-825)
+ *
+ * Uses a short window (1 minute) to protect against brute-force token guessing.
+ * Rate limits are applied per IP address AND per invitation token.
+ *
+ * Thresholds:
+ * - Per IP: 10 attempts per minute (allows trying a few invitations)
+ * - Per token: 5 attempts per minute (more strict to prevent token brute-forcing)
+ */
+const INVITE_ACCEPT_RATE_LIMIT: {
+    perIp: RateLimitConfig;
+    perToken: RateLimitConfig;
+} = {
+    perIp: {
+        maxRequests: 10,
+        windowMs: 60_000, // 1 minute
+        expirationTtl: 120, // 2 minutes
+    },
+    perToken: {
+        maxRequests: 5,
+        windowMs: 60_000, // 1 minute
+        expirationTtl: 120, // 2 minutes
+    },
 };
 
 /**
@@ -83,6 +117,18 @@ sharingRoutes.use('/v1/invitations/:token/accept', authMiddleware());
 // ============================================================================
 // Helper Functions
 // ============================================================================
+
+/**
+ * Normalize an email address for consistent storage and comparison (HAP-822).
+ * Trims whitespace and converts to lowercase to prevent duplicate invites
+ * for case-variant emails (e.g., "User@Example.com" vs "user@example.com").
+ *
+ * @param email - The email address to normalize
+ * @returns Normalized email address (trimmed and lowercase)
+ */
+function normalizeEmail(email: string): string {
+    return email.trim().toLowerCase();
+}
 
 /**
  * Verify that the current user owns the session
@@ -132,6 +178,123 @@ async function checkInvitationRateLimit(
     });
 
     return { allowed: true };
+}
+
+/**
+ * Auto-expire pending invitations that are past their expiresAt time.
+ * Updates the status in the database and returns the IDs of expired invitations.
+ * This provides cleanup on-read without requiring accept attempts (HAP-824).
+ */
+async function expirePendingInvitations(
+    db: ReturnType<typeof getDb>,
+    sessionId?: string
+): Promise<string[]> {
+    const now = new Date();
+
+    // Build the where clause based on whether we're filtering by session
+    const baseCondition = and(
+        eq(schema.sessionShareInvitations.status, 'pending'),
+        sql`${schema.sessionShareInvitations.expiresAt} < ${now.getTime()}`
+    );
+
+    const whereCondition = sessionId
+        ? and(baseCondition, eq(schema.sessionShareInvitations.sessionId, sessionId))
+        : baseCondition;
+
+    // Find expired invitations
+    const expiredInvitations = await db
+        .select({ id: schema.sessionShareInvitations.id })
+        .from(schema.sessionShareInvitations)
+        .where(whereCondition);
+
+    if (expiredInvitations.length === 0) {
+        return [];
+    }
+
+    // Update status to expired
+    const expiredIds = expiredInvitations.map((inv) => inv.id);
+    for (const id of expiredIds) {
+        await db
+            .update(schema.sessionShareInvitations)
+            .set({ status: 'expired', updatedAt: now })
+            .where(eq(schema.sessionShareInvitations.id, id));
+    }
+
+    return expiredIds;
+}
+
+/**
+ * Get the canonical email for a user account
+ * Currently sources from GitHub profile if connected
+ * Returns null if no email can be determined
+ *
+ * HAP-823: Used for invitation acceptance validation
+ */
+async function getUserEmail(
+    db: ReturnType<typeof getDb>,
+    userId: string
+): Promise<string | null> {
+    // Get the user's account with GitHub connection
+    const account = await db.query.accounts.findFirst({
+        where: (accounts, { eq }) => eq(accounts.id, userId),
+        with: {
+            githubUser: true,
+        },
+    });
+
+    if (!account) {
+        return null;
+    }
+
+    // Try to get email from GitHub profile
+    if (account.githubUser) {
+        const profile = account.githubUser.profile as { email?: string | null } | null;
+        if (profile?.email) {
+            return normalizeEmail(profile.email);
+        }
+    }
+
+    // Fallback: check if username looks like an email
+    if (account.username && account.username.includes('@')) {
+        return normalizeEmail(account.username);
+    }
+
+    return null;
+}
+
+/**
+ * Get a display name for a user account (HAP-805)
+ * Used for personalizing invitation emails
+ * Returns the first available of: firstName + lastName, username, or null
+ */
+async function getUserDisplayName(
+    db: ReturnType<typeof getDb>,
+    userId: string
+): Promise<string | null> {
+    const account = await db.query.accounts.findFirst({
+        where: (accounts, { eq }) => eq(accounts.id, userId),
+    });
+
+    if (!account) {
+        return null;
+    }
+
+    // Try full name first
+    if (account.firstName && account.lastName) {
+        return `${account.firstName} ${account.lastName}`;
+    }
+
+    // Try first name only
+    if (account.firstName) {
+        return account.firstName;
+    }
+
+    // Fall back to username
+    if (account.username) {
+        return account.username;
+    }
+
+    return null;
 }
 
 /**
@@ -258,6 +421,9 @@ sharingRoutes.openapi(getSharingSettingsRoute, async (c) => {
     if (error) {
         return c.json({ error }, 404);
     }
+
+    // Auto-expire any pending invitations past their expiration time (HAP-824)
+    await expirePendingInvitations(db, sessionId);
 
     // Get shares
     const shares = await db
@@ -444,6 +610,12 @@ sharingRoutes.openapi(addShareRoute, async (c) => {
 
     // Handle email invitation
     if (body.email) {
+        // Normalize email for consistent storage and comparison (HAP-822)
+        const normalizedEmail = normalizeEmail(body.email);
+
+        // Auto-expire any pending invitations past their expiration time (HAP-824)
+        await expirePendingInvitations(db, sessionId);
+
         // Check rate limit
         const rateLimit = await checkInvitationRateLimit(c.env.RATE_LIMIT_KV, userId);
         if (!rateLimit.allowed) {
@@ -456,12 +628,12 @@ sharingRoutes.openapi(addShareRoute, async (c) => {
             );
         }
 
-        // Check if invitation already exists
+        // Check if invitation already exists (using normalized email to prevent duplicates)
         const existing = await db.query.sessionShareInvitations.findFirst({
             where: (invs, { eq, and }) =>
                 and(
                     eq(invs.sessionId, sessionId),
-                    eq(invs.email, body.email!),
+                    eq(invs.email, normalizedEmail),
                     eq(invs.status, 'pending')
                 ),
         });
@@ -470,30 +642,19 @@ sharingRoutes.openapi(addShareRoute, async (c) => {
             return c.json({ error: 'Invitation already sent to this email' }, 409);
         }
 
-        // Check if user with this email already has a share
-        const existingUser = await db.query.accounts.findFirst({
-            where: (accounts, { eq }) => eq(accounts.username, body.email!), // Assuming email lookup
-        });
+        // NOTE: We intentionally do NOT check accounts.username for email matches (HAP-822).
+        // The accounts.username field is a username, not an email address.
+        // When Better Auth is integrated (HAP-29), we can add proper email-based user lookup
+        // using the auth user table's email field.
 
-        if (existingUser) {
-            const existingShare = await db.query.sessionShares.findFirst({
-                where: (shares, { eq, and }) =>
-                    and(eq(shares.sessionId, sessionId), eq(shares.userId, existingUser.id)),
-            });
-
-            if (existingShare) {
-                return c.json({ error: 'User with this email already has access' }, 409);
-            }
-        }
-
-        // Create invitation
+        // Create invitation with normalized email
         const expiresAt = new Date();
         expiresAt.setDate(expiresAt.getDate() + INVITATION_EXPIRY_DAYS);
 
         const invitation = {
             id: createId(),
             sessionId,
-            email: body.email,
+            email: normalizedEmail,
             permission: body.permission,
             token: crypto.randomUUID(),
             status: 'pending' as const,
@@ -506,7 +667,28 @@ sharingRoutes.openapi(addShareRoute, async (c) => {
 
         await db.insert(schema.sessionShareInvitations).values(invitation);
 
-        // TODO: Send email (out of scope for HAP-772)
+        // Send invitation email (HAP-805)
+        const inviterName = await getUserDisplayName(db, userId);
+        const emailResult = await sendInvitationEmail(c.env, {
+            recipientEmail: normalizedEmail,
+            invitationToken: invitation.token,
+            inviterName: inviterName ?? undefined,
+            permission: body.permission,
+            expiresAt: invitation.expiresAt,
+        });
+
+        if (!emailResult.success) {
+            // Email failed - delete the invitation and return error
+            // This ensures we don't create orphaned invites
+            await db
+                .delete(schema.sessionShareInvitations)
+                .where(eq(schema.sessionShareInvitations.id, invitation.id));
+
+            return c.json(
+                { error: emailResult.error ?? 'Failed to send invitation email' },
+                500
+            );
+        }
 
         return c.json({
             success: true,
@@ -909,11 +1091,17 @@ sharingRoutes.openapi(sendInvitationRoute, async (c) => {
     const { email, permission } = c.req.valid('json');
     const db = getDb(c.env.DB);
 
+    // Normalize email for consistent storage and comparison (HAP-822)
+    const normalizedEmail = normalizeEmail(email);
+
     // Verify ownership
     const { error } = await verifySessionOwnership(db, sessionId, userId);
     if (error) {
         return c.json({ error }, 404);
     }
+
+    // Auto-expire any pending invitations past their expiration time (HAP-824)
+    await expirePendingInvitations(db, sessionId);
 
     // Check rate limit
     const rateLimit = await checkInvitationRateLimit(c.env.RATE_LIMIT_KV, userId);
@@ -927,24 +1115,24 @@ sharingRoutes.openapi(sendInvitationRoute, async (c) => {
         );
     }
 
-    // Check if invitation already exists
+    // Check if invitation already exists (using normalized email to prevent duplicates)
     const existing = await db.query.sessionShareInvitations.findFirst({
         where: (invs, { eq, and }) =>
-            and(eq(invs.sessionId, sessionId), eq(invs.email, email), eq(invs.status, 'pending')),
+            and(eq(invs.sessionId, sessionId), eq(invs.email, normalizedEmail), eq(invs.status, 'pending')),
     });
 
     if (existing) {
         return c.json({ error: 'Invitation already sent to this email' }, 409);
     }
 
-    // Create invitation
+    // Create invitation with normalized email
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + INVITATION_EXPIRY_DAYS);
 
     const invitation = {
         id: createId(),
         sessionId,
-        email,
+        email: normalizedEmail,
         permission,
         token: crypto.randomUUID(),
         status: 'pending' as const,
@@ -957,7 +1145,28 @@ sharingRoutes.openapi(sendInvitationRoute, async (c) => {
 
     await db.insert(schema.sessionShareInvitations).values(invitation);
 
-    // TODO: Send email (out of scope for HAP-772)
+    // Send invitation email (HAP-805)
+    const inviterName = await getUserDisplayName(db, userId);
+    const emailResult = await sendInvitationEmail(c.env, {
+        recipientEmail: normalizedEmail,
+        invitationToken: invitation.token,
+        inviterName: inviterName ?? undefined,
+        permission,
+        expiresAt: invitation.expiresAt,
+    });
+
+    if (!emailResult.success) {
+        // Email failed - delete the invitation and return error
+        // This ensures we don't create orphaned invites
+        await db
+            .delete(schema.sessionShareInvitations)
+            .where(eq(schema.sessionShareInvitations.id, invitation.id));
+
+        return c.json(
+            { error: emailResult.error ?? 'Failed to send invitation email' },
+            500
+        );
+    }
 
     return c.json({
         success: true,
@@ -996,14 +1205,22 @@ const acceptInvitationRoute = createRoute({
             content: { 'application/json': { schema: NotFoundErrorSchema } },
             description: 'Invitation not found or expired',
         },
+        403: {
+            content: { 'application/json': { schema: ForbiddenErrorSchema } },
+            description: 'User email does not match invitation recipient',
+        },
         409: {
             content: { 'application/json': { schema: ConflictErrorSchema } },
             description: 'Already have access',
         },
+        429: {
+            content: { 'application/json': { schema: RateLimitErrorSchema } },
+            description: 'Rate limit exceeded for invitation acceptance attempts',
+        },
     },
     tags: ['Session Sharing'],
     summary: 'Accept invitation',
-    description: 'Accept an email invitation and gain access to the shared session.',
+    description: 'Accept an email invitation and gain access to the shared session. Validates that the authenticated user email matches the invitation recipient. Rate limited to prevent brute-force attacks on invitation tokens.',
 });
 
 // @ts-expect-error - OpenAPI handler type inference doesn't carry Variables from middleware
@@ -1011,6 +1228,49 @@ sharingRoutes.openapi(acceptInvitationRoute, async (c) => {
     const userId = (c as unknown as Context<{ Bindings: Env; Variables: AuthVariables }>).get('userId');
     const { token } = c.req.valid('param');
     const db = getDb(c.env.DB);
+
+    // Rate limiting (HAP-825): Check both per-IP and per-token limits
+    // This prevents brute-force attempts to guess invitation tokens
+    const clientIp =
+        c.req.header('CF-Connecting-IP') ?? c.req.header('X-Forwarded-For')?.split(',')[0]?.trim() ?? 'unknown';
+
+    // Check per-IP rate limit first (allows legitimate users trying multiple invitations)
+    const ipRateLimit = await checkRateLimit(
+        c.env.RATE_LIMIT_KV,
+        'invite_accept_ip',
+        clientIp,
+        INVITE_ACCEPT_RATE_LIMIT.perIp
+    );
+
+    if (!ipRateLimit.allowed) {
+        return c.json(
+            {
+                error: 'Too many invitation acceptance attempts. Please try again later.',
+                retryAfter: ipRateLimit.retryAfter,
+            },
+            429,
+            { 'Retry-After': String(ipRateLimit.retryAfter) }
+        );
+    }
+
+    // Check per-token rate limit (stricter - prevents targeted brute-force on specific tokens)
+    const tokenRateLimit = await checkRateLimit(
+        c.env.RATE_LIMIT_KV,
+        'invite_accept_token',
+        token,
+        INVITE_ACCEPT_RATE_LIMIT.perToken
+    );
+
+    if (!tokenRateLimit.allowed) {
+        return c.json(
+            {
+                error: 'Too many attempts for this invitation. Please try again later.',
+                retryAfter: tokenRateLimit.retryAfter,
+            },
+            429,
+            { 'Retry-After': String(tokenRateLimit.retryAfter) }
+        );
+    }
 
     // Find invitation
     const invitation = await db.query.sessionShareInvitations.findFirst({
@@ -1029,6 +1289,27 @@ sharingRoutes.openapi(acceptInvitationRoute, async (c) => {
             .set({ status: 'expired', updatedAt: new Date() })
             .where(eq(schema.sessionShareInvitations.id, invitation.id));
         return c.json({ error: 'Invitation has expired' }, 404);
+    }
+
+    // HAP-823: Validate that authenticated user email matches invitation recipient
+    // This prevents invitation tokens from being used by unintended users if leaked
+    const userEmail = await getUserEmail(db, userId);
+    const invitationEmail = normalizeEmail(invitation.email);
+
+    if (!userEmail) {
+        // User has no email associated with their account
+        return c.json(
+            { error: 'Your account has no email address. Please connect GitHub or set an email to accept invitations.' },
+            403
+        );
+    }
+
+    if (userEmail !== invitationEmail) {
+        // Email mismatch - invitation was sent to a different email address
+        return c.json(
+            { error: 'This invitation was sent to a different email address.' },
+            403
+        );
     }
 
     // Check if already has access
