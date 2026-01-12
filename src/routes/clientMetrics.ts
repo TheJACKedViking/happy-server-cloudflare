@@ -1,12 +1,14 @@
 import { createRoute, OpenAPIHono } from '@hono/zod-openapi';
 import type { Context } from 'hono';
 import { authMiddleware, type AuthVariables } from '@/middleware/auth';
+import { checkRateLimit, type RateLimitConfig } from '@/lib/rate-limit';
 import {
     ValidationMetricsRequestSchema,
     RestoreMetricsRequestSchema,
     ClientMetricsResponseSchema,
     ClientMetricsUnauthorizedErrorSchema,
     ClientMetricsInternalErrorSchema,
+    ClientMetricsRateLimitExceededSchema,
 } from '@/schemas/clientMetrics';
 
 /**
@@ -15,7 +17,21 @@ import {
 interface Env {
     DB: D1Database;
     CLIENT_METRICS?: AnalyticsEngineDataset;
+    /** KV namespace for rate limiting (HAP-826) */
+    RATE_LIMIT_KV?: KVNamespace;
 }
+
+/**
+ * Rate limit configuration for client metrics endpoints (HAP-826)
+ *
+ * Client metrics are batched and sent periodically, so we use
+ * a moderate rate limit. 50 requests per minute per user is sufficient.
+ */
+export const CLIENT_METRICS_RATE_LIMIT: RateLimitConfig = {
+    maxRequests: 50,
+    windowMs: 60_000, // 1 minute
+    expirationTtl: 120, // 2 minutes (covers window + cleanup margin)
+};
 
 /**
  * Client metrics routes module (HAP-577)
@@ -34,7 +50,13 @@ interface Env {
  * - double2: session duration in ms
  * - index1: account ID (for per-user grouping)
  *
+ * Rate limiting (HAP-826):
+ * - 50 requests per minute per user ID
+ * - Returns 429 with Retry-After header when exceeded
+ * - Uses KV-backed rate limiting when available, memory fallback otherwise
+ *
  * @see HAP-577 Add validation failure metrics for message schema parsing
+ * @see HAP-826 Add rate limiting to analytics ingestion endpoints
  */
 const clientMetricsRoutes = new OpenAPIHono<{ Bindings: Env }>();
 
@@ -74,6 +96,28 @@ const ingestValidationMetricsRoute = createRoute({
             },
             description: 'Unauthorized',
         },
+        429: {
+            content: {
+                'application/json': {
+                    schema: ClientMetricsRateLimitExceededSchema,
+                },
+            },
+            headers: {
+                'Retry-After': {
+                    schema: { type: 'string' },
+                    description: 'Seconds until the rate limit resets',
+                },
+                'X-RateLimit-Limit': {
+                    schema: { type: 'string' },
+                    description: 'Maximum requests per window',
+                },
+                'X-RateLimit-Remaining': {
+                    schema: { type: 'string' },
+                    description: 'Remaining requests in current window',
+                },
+            },
+            description: 'Too Many Requests - rate limit exceeded (50 per minute)',
+        },
         500: {
             content: {
                 'application/json': {
@@ -104,13 +148,45 @@ clientMetricsRoutes.openapi(ingestValidationMetricsRoute, async (c) => {
         'userId'
     );
     const metrics = c.req.valid('json');
+    // Check rate limit (HAP-826)
+    const rateLimitResult = await checkRateLimit(
+        c.env.RATE_LIMIT_KV,
+        'client-metrics-validation',
+        userId,
+        CLIENT_METRICS_RATE_LIMIT
+    );
+
+    if (!rateLimitResult.allowed) {
+        return c.json(
+            {
+                error: 'Rate limit exceeded' as const,
+                retryAfter: rateLimitResult.retryAfter,
+            },
+            429,
+            {
+                'Retry-After': String(rateLimitResult.retryAfter),
+                'X-RateLimit-Limit': String(rateLimitResult.limit),
+                'X-RateLimit-Remaining': '0',
+            }
+        );
+    }
 
     try {
-        // Check if Analytics Engine is configured
+        // Check if Analytics Engine is configured (HAP-827)
         if (!c.env.CLIENT_METRICS) {
-            // Silently accept but don't store - allows graceful degradation
+            // Accept request but indicate metrics were not ingested
+            // Returns 200 to avoid breaking clients, but surfaces the drop
             console.warn('[ClientMetrics] CLIENT_METRICS binding not configured, metrics dropped');
-            return c.json({ success: true, dataPointsWritten: 0 });
+            return c.json(
+                {
+                    success: true,
+                    dataPointsWritten: 0,
+                    ingested: false,
+                    warning: 'Analytics Engine binding not configured',
+                },
+                200,
+                { 'X-Ingested': 'false' }
+            );
         }
 
         let dataPointsWritten = 0;
@@ -214,6 +290,28 @@ const ingestRestoreMetricsRoute = createRoute({
             },
             description: 'Unauthorized',
         },
+        429: {
+            content: {
+                'application/json': {
+                    schema: ClientMetricsRateLimitExceededSchema,
+                },
+            },
+            headers: {
+                'Retry-After': {
+                    schema: { type: 'string' },
+                    description: 'Seconds until the rate limit resets',
+                },
+                'X-RateLimit-Limit': {
+                    schema: { type: 'string' },
+                    description: 'Maximum requests per window',
+                },
+                'X-RateLimit-Remaining': {
+                    schema: { type: 'string' },
+                    description: 'Remaining requests in current window',
+                },
+            },
+            description: 'Too Many Requests - rate limit exceeded (50 per minute)',
+        },
         500: {
             content: {
                 'application/json': {
@@ -248,13 +346,45 @@ clientMetricsRoutes.openapi(ingestRestoreMetricsRoute, async (c) => {
         'userId'
     );
     const metrics = c.req.valid('json');
+    // Check rate limit (HAP-826)
+    const rateLimitResult = await checkRateLimit(
+        c.env.RATE_LIMIT_KV,
+        'client-metrics-restore',
+        userId,
+        CLIENT_METRICS_RATE_LIMIT
+    );
+
+    if (!rateLimitResult.allowed) {
+        return c.json(
+            {
+                error: 'Rate limit exceeded' as const,
+                retryAfter: rateLimitResult.retryAfter,
+            },
+            429,
+            {
+                'Retry-After': String(rateLimitResult.retryAfter),
+                'X-RateLimit-Limit': String(rateLimitResult.limit),
+                'X-RateLimit-Remaining': '0',
+            }
+        );
+    }
 
     try {
-        // Check if Analytics Engine is configured
+        // Check if Analytics Engine is configured (HAP-827)
         if (!c.env.CLIENT_METRICS) {
-            // Silently accept but don't store - allows graceful degradation
+            // Accept request but indicate metrics were not ingested
+            // Returns 200 to avoid breaking clients, but surfaces the drop
             console.warn('[ClientMetrics] CLIENT_METRICS binding not configured, restore metrics dropped');
-            return c.json({ success: true, dataPointsWritten: 0 });
+            return c.json(
+                {
+                    success: true,
+                    dataPointsWritten: 0,
+                    ingested: false,
+                    warning: 'Analytics Engine binding not configured',
+                },
+                200,
+                { 'X-Ingested': 'false' }
+            );
         }
 
         // Determine outcome category for analysis

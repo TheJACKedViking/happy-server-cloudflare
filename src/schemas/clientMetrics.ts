@@ -10,6 +10,7 @@ import { z } from '@hono/zod-openapi';
  * Metrics are batched client-side and sent periodically for efficiency.
  *
  * @see HAP-577 Add validation failure metrics for message schema parsing
+ * @see HAP-826 Add rate limiting to analytics ingestion endpoints
  */
 
 // ============================================================================
@@ -74,16 +75,32 @@ export const ValidationMetricsRequestSchema = z
 
 /**
  * Schema for client metrics success response
+ *
+ * HAP-827: Added `ingested` field to indicate whether metrics were actually
+ * written to Analytics Engine. When the binding is not configured, the server
+ * returns success (to avoid breaking clients) but sets `ingested: false`.
  */
 export const ClientMetricsResponseSchema = z
     .object({
         success: z.boolean().openapi({
-            description: 'Whether the metrics were successfully ingested',
+            description: 'Whether the request was processed successfully',
             example: true,
         }),
         dataPointsWritten: z.number().int().min(0).openapi({
             description: 'Number of data points written to Analytics Engine',
             example: 4,
+        }),
+        ingested: z.boolean().optional().openapi({
+            description:
+                'Whether the metrics were actually written to Analytics Engine. ' +
+                'False when the binding is not configured. Omitted for backward compatibility when true.',
+            example: true,
+        }),
+        warning: z.string().optional().openapi({
+            description:
+                'Warning message when metrics could not be ingested. ' +
+                'Present when ingested=false to explain why.',
+            example: 'Analytics Engine binding not configured',
         }),
     })
     .openapi('ClientMetricsResponse');
@@ -115,6 +132,21 @@ export const ClientMetricsInternalErrorSchema = z
         }),
     })
     .openapi('ClientMetricsInternalError');
+
+/**
+ * Schema for 429 Rate Limit Exceeded error (HAP-826)
+ */
+export const ClientMetricsRateLimitExceededSchema = z
+    .object({
+        error: z.literal('Rate limit exceeded').openapi({
+            description: 'Error message',
+        }),
+        retryAfter: z.number().openapi({
+            description: 'Seconds until rate limit resets',
+            example: 45,
+        }),
+    })
+    .openapi('ClientMetricsRateLimitExceeded');
 
 // ============================================================================
 // Restore Metrics Types (HAP-688)
