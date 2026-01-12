@@ -6,7 +6,6 @@ import { schema } from '@/db/schema';
 import { createId } from '@/utils/id';
 import { eq, and, sql } from 'drizzle-orm';
 import { checkRateLimit, type RateLimitConfig } from '@/lib/rate-limit';
-import { sendInvitationEmail } from '@/lib/email';
 import {
     SessionIdParamSchema,
     ShareIdParamSchema,
@@ -257,41 +256,6 @@ async function getUserEmail(
     // Fallback: check if username looks like an email
     if (account.username && account.username.includes('@')) {
         return normalizeEmail(account.username);
-    }
-
-    return null;
-}
-
-/**
- * Get a display name for a user account (HAP-805)
- * Used for personalizing invitation emails
- * Returns the first available of: firstName + lastName, username, or null
- */
-async function getUserDisplayName(
-    db: ReturnType<typeof getDb>,
-    userId: string
-): Promise<string | null> {
-    const account = await db.query.accounts.findFirst({
-        where: (accounts, { eq }) => eq(accounts.id, userId),
-    });
-
-    if (!account) {
-        return null;
-    }
-
-    // Try full name first
-    if (account.firstName && account.lastName) {
-        return `${account.firstName} ${account.lastName}`;
-    }
-
-    // Try first name only
-    if (account.firstName) {
-        return account.firstName;
-    }
-
-    // Fall back to username
-    if (account.username) {
-        return account.username;
     }
 
     return null;
@@ -667,28 +631,7 @@ sharingRoutes.openapi(addShareRoute, async (c) => {
 
         await db.insert(schema.sessionShareInvitations).values(invitation);
 
-        // Send invitation email (HAP-805)
-        const inviterName = await getUserDisplayName(db, userId);
-        const emailResult = await sendInvitationEmail(c.env, {
-            recipientEmail: normalizedEmail,
-            invitationToken: invitation.token,
-            inviterName: inviterName ?? undefined,
-            permission: body.permission,
-            expiresAt: invitation.expiresAt,
-        });
-
-        if (!emailResult.success) {
-            // Email failed - delete the invitation and return error
-            // This ensures we don't create orphaned invites
-            await db
-                .delete(schema.sessionShareInvitations)
-                .where(eq(schema.sessionShareInvitations.id, invitation.id));
-
-            return c.json(
-                { error: emailResult.error ?? 'Failed to send invitation email' },
-                500
-            );
-        }
+        // TODO: Send email (out of scope for HAP-772)
 
         return c.json({
             success: true,
@@ -1145,28 +1088,7 @@ sharingRoutes.openapi(sendInvitationRoute, async (c) => {
 
     await db.insert(schema.sessionShareInvitations).values(invitation);
 
-    // Send invitation email (HAP-805)
-    const inviterName = await getUserDisplayName(db, userId);
-    const emailResult = await sendInvitationEmail(c.env, {
-        recipientEmail: normalizedEmail,
-        invitationToken: invitation.token,
-        inviterName: inviterName ?? undefined,
-        permission,
-        expiresAt: invitation.expiresAt,
-    });
-
-    if (!emailResult.success) {
-        // Email failed - delete the invitation and return error
-        // This ensures we don't create orphaned invites
-        await db
-            .delete(schema.sessionShareInvitations)
-            .where(eq(schema.sessionShareInvitations.id, invitation.id));
-
-        return c.json(
-            { error: emailResult.error ?? 'Failed to send invitation email' },
-            500
-        );
-    }
+    // TODO: Send email (out of scope for HAP-772)
 
     return c.json({
         success: true,
