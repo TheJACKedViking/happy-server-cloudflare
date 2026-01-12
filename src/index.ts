@@ -9,6 +9,7 @@ import { bodySizeLimits } from '@/middleware/bodySize';
 import { securityHeadersMiddleware } from '@/middleware/securityHeaders';
 import { initAuth, cleanupExpiredTokens } from '@/lib/auth';
 import { cleanupEmptyArchivedSessions } from '@/lib/sessionCleanup';
+import { cleanupExpiredInvitations } from '@/lib/invitationCleanup';
 import { getMasterSecret, validateEnv } from '@/config/env';
 import { buildSentryOptions } from '@/lib/sentry';
 import authRoutes from '@/routes/auth';
@@ -141,6 +142,20 @@ interface Env {
      * @see https://dev.fingerprint.com/docs/get-server-side-intelligence
      */
     FINGERPRINT_API_KEY?: string;
+
+    /**
+     * Resend API key for sending transactional emails (HAP-805)
+     * @optional - if not set, email sending is disabled in production
+     * @see https://resend.com/api-keys
+     */
+    RESEND_API_KEY?: string;
+
+    /**
+     * Base URL for the Happy app (HAP-805)
+     * Used for building invitation accept links in emails
+     * @optional - defaults to https://happy.enflamemedia.com
+     */
+    HAPPY_APP_URL?: string;
 }
 
 /**
@@ -151,8 +166,42 @@ const APP_VERSION = '0.0.0';
 /**
  * Main Hono application instance with OpenAPI support
  * Configured with typed environment bindings for Cloudflare Workers
+ *
+ * HAP-647: Uses defaultHook to sanitize Zod validation error messages.
+ * Validation errors are returned with generic messages to prevent
+ * exposing internal field paths and schema structure.
  */
-const app = new OpenAPIHono<{ Bindings: Env }>();
+const app = new OpenAPIHono<{ Bindings: Env }>({
+    defaultHook: (result, c): Response | void => {
+        if (!result.success) {
+            // Get request ID for correlation (may not be set yet if validation fails early)
+            // Use type assertion since requestId middleware sets this
+            const requestId = (c.var as { requestId?: string })?.requestId || crypto.randomUUID().slice(0, 8);
+            const isDevelopment = (c.env as { ENVIRONMENT?: string })?.ENVIRONMENT === 'development';
+
+            // Log full validation details internally for debugging
+            console.warn(`[${requestId}] Validation error:`, JSON.stringify(result.error.flatten()));
+
+            // Return sanitized error response
+            // In development, show field-level errors for debugging
+            // In production, use generic message to prevent information leakage
+            const errorMessage = isDevelopment
+                ? `Validation failed: ${result.error.issues.map((e: { message: string }) => e.message).join(', ')}`
+                : 'Invalid request data';
+
+            return c.json(
+                {
+                    error: errorMessage,
+                    code: 'VALIDATION_FAILED',
+                    requestId,
+                    timestamp: new Date().toISOString(),
+                },
+                400
+            );
+        }
+        // When validation succeeds, return undefined to continue to the route handler
+    },
+});
 
 /*
  * Global Middleware
@@ -488,8 +537,9 @@ export { app };
 /**
  * Scheduled event handler for cron triggers
  * Runs daily at 2 AM UTC for maintenance tasks:
- * - Clean up expired token blacklist entries
+ * - Clean up expired token blacklist entries (HAP-504)
  * - Delete empty archived sessions (sessions with no messages)
+ * - Mark expired share invitations as 'expired' (HAP-824)
  *
  * Note: Sentry is automatically initialized by the withSentry wrapper for scheduled handlers.
  * Error capture and flushing is handled by the wrapper.
@@ -498,8 +548,9 @@ export { app };
  * @param env - Environment bindings
  * @param ctx - Execution context
  *
- * @see HAP-504 for implementation details
+ * @see HAP-504 for token blacklist implementation
  * @see HAP-452 for token blacklist architecture
+ * @see HAP-824 for invitation expiration implementation
  */
 async function scheduled(event: ScheduledEvent, env: Env, _ctx: ExecutionContext): Promise<void> {
     console.log(`[Scheduled] Maintenance triggered at ${new Date(event.scheduledTime).toISOString()}`);
@@ -531,6 +582,17 @@ async function scheduled(event: ScheduledEvent, env: Env, _ctx: ExecutionContext
     } catch (error) {
         Sentry.captureException(error);
         console.error('[Scheduled] Empty sessions cleanup failed:', error);
+        // Don't rethrow - let the worker complete gracefully
+    }
+
+    // Task 3: Expired share invitations cleanup (HAP-824)
+    Sentry.setTag('task', 'expired-invitations-cleanup');
+    try {
+        const expired = await cleanupExpiredInvitations(env.DB);
+        console.log(`[Scheduled] Marked ${expired} share invitations as expired`);
+    } catch (error) {
+        Sentry.captureException(error);
+        console.error('[Scheduled] Expired invitations cleanup failed:', error);
         // Don't rethrow - let the worker complete gracefully
     }
     // Note: Sentry flush is handled automatically by withSentry wrapper
