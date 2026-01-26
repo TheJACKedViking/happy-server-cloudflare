@@ -465,4 +465,380 @@ describe('Error Handler Middleware', () => {
             expect(body.canTryAgain).toBe(true);
         });
     });
+
+    /**
+     * HAP-913: Complete error code coverage for mutation testing
+     *
+     * Tests all error codes mapped in getHttpStatusFromErrorCode to ensure
+     * mutations in the conditional expressions are detected.
+     */
+    describe('Complete Error Code Coverage (HAP-913)', () => {
+        describe('Authentication Errors (401)', () => {
+            it('should return 401 for NOT_AUTHENTICATED', async () => {
+                app.get('/test', () => {
+                    throw new AppError(ErrorCodes.NOT_AUTHENTICATED, 'Not authenticated');
+                });
+
+                const res = await app.request('/test');
+                const body = await res.json() as TestAppErrorResponse;
+
+                expect(res.status).toBe(401);
+                expect(body.code).toBe('NOT_AUTHENTICATED');
+                expect(body.message).toBe('Not authenticated');
+            });
+
+            it('should return 401 for TOKEN_EXPIRED', async () => {
+                app.get('/test', () => {
+                    throw new AppError(ErrorCodes.TOKEN_EXPIRED, 'Token has expired');
+                });
+
+                const res = await app.request('/test');
+                const body = await res.json() as TestAppErrorResponse;
+
+                expect(res.status).toBe(401);
+                expect(body.code).toBe('TOKEN_EXPIRED');
+                expect(body.message).toBe('Token has expired');
+            });
+
+            it('should return 401 for AUTH_NOT_INITIALIZED', async () => {
+                app.get('/test', () => {
+                    throw new AppError(ErrorCodes.AUTH_NOT_INITIALIZED, 'Auth not initialized');
+                });
+
+                const res = await app.request('/test');
+                const body = await res.json() as TestAppErrorResponse;
+
+                expect(res.status).toBe(401);
+                expect(body.code).toBe('AUTH_NOT_INITIALIZED');
+                expect(body.message).toBe('Auth not initialized');
+            });
+        });
+
+        describe('Not Found Errors (404)', () => {
+            it('should return 404 for SESSION_NOT_FOUND', async () => {
+                app.get('/test', () => {
+                    throw new AppError(ErrorCodes.SESSION_NOT_FOUND, 'Session not found');
+                });
+
+                const res = await app.request('/test');
+                const body = await res.json() as TestAppErrorResponse;
+
+                expect(res.status).toBe(404);
+                expect(body.code).toBe('SESSION_NOT_FOUND');
+                expect(body.message).toBe('Session not found');
+            });
+
+            it('should return 404 for RESOURCE_NOT_FOUND', async () => {
+                app.get('/test', () => {
+                    throw new AppError(ErrorCodes.RESOURCE_NOT_FOUND, 'Resource not found');
+                });
+
+                const res = await app.request('/test');
+                const body = await res.json() as TestAppErrorResponse;
+
+                expect(res.status).toBe(404);
+                expect(body.code).toBe('RESOURCE_NOT_FOUND');
+                expect(body.message).toBe('Resource not found');
+            });
+        });
+
+        describe('Validation Errors (400)', () => {
+            it('should return 400 for VALIDATION_FAILED', async () => {
+                app.get('/test', () => {
+                    throw new AppError(ErrorCodes.VALIDATION_FAILED, 'Validation failed');
+                });
+
+                const res = await app.request('/test');
+                const body = await res.json() as TestAppErrorResponse;
+
+                expect(res.status).toBe(400);
+                expect(body.code).toBe('VALIDATION_FAILED');
+                expect(body.message).toBe('Validation failed');
+            });
+        });
+
+        describe('Conflict Errors (409)', () => {
+            it('should return 409 for VERSION_CONFLICT', async () => {
+                app.get('/test', () => {
+                    throw new AppError(ErrorCodes.VERSION_CONFLICT, 'Version conflict');
+                });
+
+                const res = await app.request('/test');
+                const body = await res.json() as TestAppErrorResponse;
+
+                expect(res.status).toBe(409);
+                expect(body.code).toBe('VERSION_CONFLICT');
+                expect(body.message).toBe('Version conflict');
+            });
+        });
+
+        describe('Encryption Errors (400)', () => {
+            it('should return 400 for ENCRYPTION_ERROR', async () => {
+                app.get('/test', () => {
+                    throw new AppError(ErrorCodes.ENCRYPTION_ERROR, 'Encryption error');
+                });
+
+                const res = await app.request('/test');
+                const body = await res.json() as TestAppErrorResponse;
+
+                expect(res.status).toBe(400);
+                expect(body.code).toBe('ENCRYPTION_ERROR');
+                expect(body.message).toBe('Encryption error');
+            });
+
+            it('should return 400 for DECRYPTION_FAILED', async () => {
+                app.get('/test', () => {
+                    throw new AppError(ErrorCodes.DECRYPTION_FAILED, 'Decryption failed');
+                });
+
+                const res = await app.request('/test');
+                const body = await res.json() as TestAppErrorResponse;
+
+                expect(res.status).toBe(400);
+                expect(body.code).toBe('DECRYPTION_FAILED');
+                expect(body.message).toBe('Decryption failed');
+            });
+
+            it('should return 400 for NONCE_TOO_SHORT', async () => {
+                app.get('/test', () => {
+                    throw new AppError(ErrorCodes.NONCE_TOO_SHORT, 'Nonce too short');
+                });
+
+                const res = await app.request('/test');
+                const body = await res.json() as TestAppErrorResponse;
+
+                expect(res.status).toBe(400);
+                expect(body.code).toBe('NONCE_TOO_SHORT');
+                expect(body.message).toBe('Nonce too short');
+            });
+        });
+
+        describe('Connection Errors (503)', () => {
+            it('should return 503 for SERVICE_NOT_CONNECTED', async () => {
+                app.get('/test', () => {
+                    throw new AppError(ErrorCodes.SERVICE_NOT_CONNECTED, 'Service not connected');
+                });
+
+                const res = await app.request('/test');
+                const body = await res.json() as TestAppErrorResponse;
+
+                expect(res.status).toBe(503);
+                expect(body.code).toBe('SERVICE_NOT_CONNECTED');
+                expect(body.message).toBe('Service not connected');
+            });
+        });
+
+        describe('Timeout Errors (504)', () => {
+            it('should return 504 for PROCESS_TIMEOUT', async () => {
+                app.get('/test', () => {
+                    throw new AppError(ErrorCodes.PROCESS_TIMEOUT, 'Process timeout');
+                });
+
+                const res = await app.request('/test');
+                const body = await res.json() as TestAppErrorResponse;
+
+                expect(res.status).toBe(504);
+                expect(body.code).toBe('PROCESS_TIMEOUT');
+                expect(body.message).toBe('Process timeout');
+            });
+        });
+
+        describe('Default Status (500)', () => {
+            it('should return 500 for unknown error codes', async () => {
+                app.get('/test', () => {
+                    throw new AppError(ErrorCodes.UNKNOWN_ERROR, 'Unknown error');
+                });
+
+                const res = await app.request('/test');
+                const body = await res.json() as TestAppErrorResponse;
+
+                expect(res.status).toBe(500);
+                expect(body.code).toBe('UNKNOWN_ERROR');
+            });
+
+            it('should return 500 for UNKNOWN_ERROR codes not explicitly mapped', async () => {
+                app.get('/test', () => {
+                    // FETCH_FAILED is not explicitly mapped to a status code,
+                    // so it should default to 500
+                    throw new AppError(ErrorCodes.FETCH_FAILED, 'Fetch failed');
+                });
+
+                const res = await app.request('/test');
+
+                // FETCH_FAILED is not in the error code mapping, should default to 500
+                expect(res.status).toBe(500);
+            });
+        });
+    });
+
+    /**
+     * HAP-913: String literal mutations and edge cases
+     */
+    describe('String Literal Mutations (HAP-913)', () => {
+        it('should use exact error message "Internal server error" as fallback', async () => {
+            app.get('/test', () => {
+                // AppError with empty message should use fallback
+                throw new AppError(ErrorCodes.INTERNAL_ERROR, '');
+            });
+
+            const res = await app.request('/test');
+            const body = await res.json() as TestAppErrorResponse;
+
+            // The fallback message should be exactly "Internal server error"
+            expect(body.message).toBe('Internal server error');
+        });
+
+        it('should format requestId prefix correctly in log', async () => {
+            app.get('/test', () => {
+                throw new AppError(ErrorCodes.NOT_FOUND, 'Test not found');
+            });
+
+            await app.request('/test');
+
+            // Verify the log format: [requestId] Client error (AppError):
+            expect(consoleWarnSpy).toHaveBeenCalledTimes(1);
+            const logCall = consoleWarnSpy.mock.calls[0];
+            // Should match format: [8-char-hex] Client error (AppError):
+            expect(logCall[0]).toMatch(/^\[[a-f0-9]{8}\] Client error \(AppError\):$/);
+        });
+
+        it('should format server error log prefix correctly', async () => {
+            app.get('/test', () => {
+                throw new AppError(ErrorCodes.INTERNAL_ERROR, 'Server failure');
+            });
+
+            await app.request('/test');
+
+            expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
+            const logCall = consoleErrorSpy.mock.calls[0];
+            // Should match format: [8-char-hex] Server error (AppError):
+            expect(logCall[0]).toMatch(/^\[[a-f0-9]{8}\] Server error \(AppError\):$/);
+        });
+
+        it('should include exact timestamp ISO format in response', async () => {
+            app.get('/test', () => {
+                throw new AppError(ErrorCodes.NOT_FOUND, 'Not found');
+            });
+
+            const res = await app.request('/test');
+            const body = await res.json() as TestAppErrorResponse;
+
+            // Timestamp should be valid ISO 8601 format
+            expect(body.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{3}Z$/);
+            // Should be parseable as a date
+            expect(new Date(body.timestamp).getTime()).not.toBeNaN();
+        });
+    });
+
+    /**
+     * HAP-913: Response object structure mutations
+     */
+    describe('Response Object Structure (HAP-913)', () => {
+        it('should include all required fields in AppError response', async () => {
+            app.get('/test', () => {
+                throw new AppError(ErrorCodes.NOT_FOUND, 'Resource not found');
+            });
+
+            const res = await app.request('/test');
+            const body = await res.json() as TestAppErrorResponse;
+
+            // All fields must be present
+            expect(body).toHaveProperty('code');
+            expect(body).toHaveProperty('message');
+            expect(body).toHaveProperty('canTryAgain');
+            expect(body).toHaveProperty('requestId');
+            expect(body).toHaveProperty('timestamp');
+
+            // Values should be correct types
+            expect(typeof body.code).toBe('string');
+            expect(typeof body.message).toBe('string');
+            expect(typeof body.canTryAgain).toBe('boolean');
+            expect(typeof body.requestId).toBe('string');
+            expect(typeof body.timestamp).toBe('string');
+        });
+
+        it('should return canTryAgain as false by default', async () => {
+            app.get('/test', () => {
+                throw new AppError(ErrorCodes.NOT_FOUND, 'Not found');
+            });
+
+            const res = await app.request('/test');
+            const body = await res.json() as TestAppErrorResponse;
+
+            expect(body.canTryAgain).toBe(false);
+        });
+
+        it('should return canTryAgain as true when explicitly set', async () => {
+            app.get('/test', () => {
+                throw new AppError(ErrorCodes.TIMEOUT, 'Request timed out', { canTryAgain: true });
+            });
+
+            const res = await app.request('/test');
+            const body = await res.json() as TestAppErrorResponse;
+
+            expect(body.canTryAgain).toBe(true);
+        });
+
+        it('should generate 8-character requestId', async () => {
+            app.get('/test', () => {
+                throw new AppError(ErrorCodes.NOT_FOUND, 'Not found');
+            });
+
+            const res = await app.request('/test');
+            const body = await res.json() as TestAppErrorResponse;
+
+            // requestId should be exactly 8 hex characters (UUID prefix)
+            expect(body.requestId).toMatch(/^[a-f0-9]{8}$/);
+        });
+    });
+
+    /**
+     * HAP-913: Logging object structure mutations
+     */
+    describe('Logging Object Structure (HAP-913)', () => {
+        it('should log code, message, and status for client errors', async () => {
+            app.get('/test', () => {
+                throw new AppError(ErrorCodes.INVALID_INPUT, 'Invalid input data');
+            });
+
+            await app.request('/test');
+
+            expect(consoleWarnSpy).toHaveBeenCalledTimes(1);
+            const logObject = consoleWarnSpy.mock.calls[0][1];
+            expect(logObject).toMatchObject({
+                code: 'INVALID_INPUT',
+                message: 'Invalid input data',
+                status: 400,
+            });
+        });
+
+        it('should log code, message, status, and stack for server errors', async () => {
+            app.get('/test', () => {
+                throw new AppError(ErrorCodes.INTERNAL_ERROR, 'Internal failure');
+            });
+
+            await app.request('/test');
+
+            expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
+            const logObject = consoleErrorSpy.mock.calls[0][1];
+            expect(logObject).toMatchObject({
+                code: 'INTERNAL_ERROR',
+                message: 'Internal failure',
+                status: 500,
+            });
+            expect(logObject).toHaveProperty('stack');
+        });
+
+        it('should NOT log stack trace for client errors', async () => {
+            app.get('/test', () => {
+                throw new AppError(ErrorCodes.NOT_FOUND, 'Not found');
+            });
+
+            await app.request('/test');
+
+            const logObject = consoleWarnSpy.mock.calls[0][1];
+            // Client error logs should not include stack
+            expect(logObject).not.toHaveProperty('stack');
+        });
+    });
 });
