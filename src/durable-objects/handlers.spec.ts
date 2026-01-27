@@ -1825,3 +1825,646 @@ describe('Additional Coverage Tests', () => {
         });
     });
 });
+
+// =============================================================================
+// MUTATION TESTING IMPROVEMENTS - String Literal Value Assertions
+// =============================================================================
+
+describe('Mutation Testing Coverage - String Literal Assertions', () => {
+    describe('handlers - Exact String Value Verification', () => {
+        it('handleSessionMetadataUpdate should return exact error message for missing session', async () => {
+            const mockDb = createMockDb();
+            mockDb._setSelectResults([]);
+            const ctx = createContext({ db: mockDb as unknown as HandlerContext['db'] });
+
+            const result = await handleSessionMetadataUpdate(ctx, {
+                sid: 'nonexistent-session',
+                metadata: '{}',
+                expectedVersion: 1,
+            });
+
+            expect(result.response?.result).toBe('error');
+            expect(result.response?.message).toBe('Session not found');
+            expect(typeof result.response?.message).toBe('string');
+        });
+
+        it('handleSessionMetadataUpdate should return exact event type on success', async () => {
+            const mockDb = createMockDb();
+            mockDb._setSelectResults([{
+                id: 'session-1',
+                accountId: 'test-user-123',
+                metadataVersion: 1,
+                metadata: '{"old":"data"}',
+            }]);
+            mockDb._setUpdateResults([{
+                id: 'session-1',
+                metadataVersion: 2,
+                metadata: '{"new":"data"}',
+            }]);
+
+            const ctx = createContext({ db: mockDb as unknown as HandlerContext['db'] });
+
+            const result = await handleSessionMetadataUpdate(ctx, {
+                sid: 'session-1',
+                metadata: '{"new":"data"}',
+                expectedVersion: 1,
+            });
+
+            expect(result.response?.result).toBe('success');
+            expect(result.broadcast?.message.event).toBe('update');
+            expect(result.broadcast?.message.data.body.t).toBe('update-session');
+        });
+
+        it('handleMachineMetadataUpdate should return exact error message for missing machine', async () => {
+            const mockDb = createMockDb();
+            mockDb._setSelectResults([]);
+            const ctx = createContext({ db: mockDb as unknown as HandlerContext['db'] });
+
+            const result = await handleMachineMetadataUpdate(ctx, {
+                machineId: 'nonexistent',
+                metadata: '{}',
+                expectedVersion: 1,
+            });
+
+            expect(result.response?.result).toBe('error');
+            expect(result.response?.message).toBe('Machine not found');
+            expect(typeof result.response?.message).toBe('string');
+        });
+
+        it('handleMachineMetadataUpdate should return exact event type on success', async () => {
+            const mockDb = createMockDb();
+            mockDb._setSelectResults([{
+                id: 'machine-1',
+                metadataVersion: 1,
+                metadata: '{}',
+            }]);
+            mockDb._setUpdateResults([{
+                id: 'machine-1',
+                metadataVersion: 2,
+            }]);
+
+            const ctx = createContext({ db: mockDb as unknown as HandlerContext['db'] });
+
+            const result = await handleMachineMetadataUpdate(ctx, {
+                machineId: 'machine-1',
+                metadata: '{"hostname":"test"}',
+                expectedVersion: 1,
+            });
+
+            expect(result.response?.result).toBe('success');
+            expect(result.broadcast?.message.event).toBe('update');
+            expect(result.broadcast?.message.data.body.t).toBe('update-machine');
+        });
+
+        it('handleArtifactRead should return exact error message for missing artifact', async () => {
+            const mockDb = createMockDb();
+            mockDb._setSelectResults([]);
+            const ctx = createContext({ db: mockDb as unknown as HandlerContext['db'] });
+
+            const result = await handleArtifactRead(ctx, { artifactId: 'nonexistent' });
+
+            expect(result.response?.result).toBe('error');
+            expect(result.response?.message).toBe('Artifact not found');
+            expect(typeof result.response?.message).toBe('string');
+        });
+
+        it('handleArtifactUpdate should return exact error message for no updates', async () => {
+            const ctx = createContext();
+
+            const result = await handleArtifactUpdate(ctx, { artifactId: 'artifact-1' });
+
+            expect(result.response?.result).toBe('error');
+            expect(result.response?.message).toBe('No updates provided');
+            expect(typeof result.response?.message).toBe('string');
+        });
+
+        it('handleArtifactCreate should return exact error message for different user artifact', async () => {
+            const mockDb = createMockDb();
+            mockDb._setSelectResults([{
+                id: 'artifact-1',
+                accountId: 'other-user',
+            }]);
+            const ctx = createContext({ db: mockDb as unknown as HandlerContext['db'] });
+
+            const result = await handleArtifactCreate(ctx, {
+                id: 'artifact-1',
+                header: 'base64',
+                body: 'base64',
+                dataEncryptionKey: 'base64',
+            });
+
+            expect(result.response?.result).toBe('error');
+            expect(result.response?.message).toContain('another account');
+            expect(typeof result.response?.message).toBe('string');
+        });
+
+        it('handleAccessKeyGet should return exact error message for missing session', async () => {
+            const mockDb = createMockDb();
+            mockDb._setSelectResults([]);
+            const ctx = createContext({ db: mockDb as unknown as HandlerContext['db'] });
+
+            const result = await handleAccessKeyGet(ctx, {
+                sessionId: 'session-1',
+                machineId: 'machine-1',
+            });
+
+            expect(result.response?.ok).toBe(false);
+            expect(result.response?.error).toContain('not found');
+            expect(typeof result.response?.error).toBe('string');
+        });
+
+        it('handleUsageReport should return exact error message for invalid key', async () => {
+            const ctx = createContext();
+
+            const result = await handleUsageReport(ctx, {
+                key: '',
+                tokens: { total: 100 },
+                cost: { total: 0.01 },
+            });
+
+            expect(result.response?.success).toBe(false);
+            expect(result.response?.error).toContain('Invalid key');
+            expect(typeof result.response?.error).toBe('string');
+        });
+    });
+});
+
+// =============================================================================
+// MUTATION TESTING IMPROVEMENTS - Object Property Value Assertions
+// =============================================================================
+
+describe('Mutation Testing Coverage - Object Property Assertions', () => {
+    describe('handlers - Deep Object Property Verification', () => {
+        it('handleSessionAlive should return correct ephemeral data structure', async () => {
+            const mockDb = createMockDb();
+            mockDb._setSelectResults([{ id: 'session-1' }]);
+            const ctx = createContext({ db: mockDb as unknown as HandlerContext['db'] });
+
+            const result = await handleSessionAlive(ctx, {
+                sid: 'session-1',
+                time: Date.now(),
+                thinking: true,
+            });
+
+            expect(result.ephemeral).toBeDefined();
+            expect(result.ephemeral?.message.event).toBe('ephemeral');
+            expect(result.ephemeral?.message.data.type).toBe('activity');
+            expect(result.ephemeral?.message.data.thinking).toBe(true);
+            expect(result.ephemeral?.message.data.active).toBe(true);
+            // lastActiveAt may be in the message data structure depending on implementation
+            expect(result.ephemeral?.message.data).toHaveProperty('sid');
+        });
+
+        it('handleSessionAlive should return thinking=false by default', async () => {
+            const mockDb = createMockDb();
+            mockDb._setSelectResults([{ id: 'session-1' }]);
+            const ctx = createContext({ db: mockDb as unknown as HandlerContext['db'] });
+
+            const result = await handleSessionAlive(ctx, {
+                sid: 'session-1',
+                time: Date.now(),
+            });
+
+            expect(result.ephemeral?.message.data.thinking).toBe(false);
+            expect(result.ephemeral?.message.data.active).toBe(true);
+        });
+
+        it('handleMachineAlive should return correct ephemeral data structure', async () => {
+            const mockDb = createMockDb();
+            mockDb._setSelectResults([{ id: 'machine-1' }]);
+            const ctx = createContext({ db: mockDb as unknown as HandlerContext['db'] });
+
+            const result = await handleMachineAlive(ctx, {
+                machineId: 'machine-1',
+                time: Date.now(),
+            });
+
+            expect(result.ephemeral).toBeDefined();
+            expect(result.ephemeral?.message.event).toBe('ephemeral');
+            expect(result.ephemeral?.message.data.type).toBe('machine-activity');
+            expect(result.ephemeral?.message.data.active).toBe(true);
+            expect(result.ephemeral?.message.data).toHaveProperty('machineId');
+        });
+
+        it('handleSessionEnd should return correct broadcast data for deleted session', async () => {
+            const mockDb = createMockDb();
+            mockDb._queueSelectResults([
+                [{ id: 'session-1' }],
+                [{ count: 0 }],
+            ]);
+            mockDb._setUpdateResults([{ seq: 1 }]);
+            const ctx = createContext({ db: mockDb as unknown as HandlerContext['db'] });
+
+            const result = await handleSessionEnd(ctx, {
+                sid: 'session-1',
+                time: Date.now(),
+            });
+
+            expect(result.broadcast).toBeDefined();
+            expect(result.broadcast?.message.event).toBe('update');
+            expect(result.broadcast?.message.data.body.t).toBe('delete-session');
+            expect(result.broadcast?.message.data.body.sid).toBe('session-1');
+            expect(result.response?.deleted).toBe(true);
+        });
+
+        it('handleSessionEnd should return correct ephemeral data for archived session', async () => {
+            const mockDb = createMockDb();
+            mockDb._queueSelectResults([
+                [{ id: 'session-1' }],
+                [{ count: 5 }],
+            ]);
+            const ctx = createContext({ db: mockDb as unknown as HandlerContext['db'] });
+
+            const result = await handleSessionEnd(ctx, {
+                sid: 'session-1',
+                time: Date.now(),
+            });
+
+            expect(result.ephemeral).toBeDefined();
+            expect(result.ephemeral?.message.event).toBe('ephemeral');
+            expect(result.ephemeral?.message.data.type).toBe('activity');
+            expect(result.ephemeral?.message.data.active).toBe(false);
+            expect(result.ephemeral?.message.data.thinking).toBe(false);
+            expect(result.ephemeral?.message.data).toHaveProperty('sid');
+        });
+
+        it('handleSessionMessage should return correct broadcast structure', async () => {
+            const mockDb = createMockDb();
+            mockDb._mockFrom.mockImplementationOnce(() => ({
+                where: vi.fn(async () => [{ id: 'session-1', seq: 5 }]),
+            }));
+            mockDb._mockFrom.mockImplementationOnce(() => ({
+                where: vi.fn(async () => []),
+            }));
+            mockDb._setUpdateResults([{ seq: 6 }]);
+            mockDb._mockSet.mockImplementationOnce(() => ({
+                where: vi.fn(() => ({
+                    returning: vi.fn(async () => [{ seq: 10 }]),
+                })),
+            }));
+
+            const ctx = createContext({ db: mockDb as unknown as HandlerContext['db'] });
+
+            const result = await handleSessionMessage(ctx, {
+                sid: 'session-1',
+                message: '{"text":"hello"}',
+            });
+
+            expect(result.broadcast).toBeDefined();
+            expect(result.broadcast?.message.event).toBe('update');
+            expect(result.broadcast?.message.data.body.t).toBe('new-message');
+            // The body structure is: { t, sid, message: { id, seq, content, ... } }
+            expect(result.broadcast?.message.data.body.sid).toBe('session-1');
+            expect(result.broadcast?.message.data.body).toHaveProperty('message');
+            expect(result.broadcast?.message.data.body.message).toHaveProperty('id');
+            expect(result.broadcast?.message.data.body.message).toHaveProperty('seq');
+            expect(result.broadcast?.message.data.body.message).toHaveProperty('content');
+        });
+
+        it('handleArtifactDelete should return correct broadcast structure', async () => {
+            const mockDb = createMockDb();
+            mockDb._setSelectResults([{ id: 'artifact-1' }]);
+            mockDb._setUpdateResults([{ seq: 1 }]);
+
+            const ctx = createContext({ db: mockDb as unknown as HandlerContext['db'] });
+
+            const result = await handleArtifactDelete(ctx, { artifactId: 'artifact-1' });
+
+            expect(result.response?.result).toBe('success');
+            expect(result.broadcast).toBeDefined();
+            expect(result.broadcast?.message.event).toBe('update');
+            expect(result.broadcast?.message.data.body.t).toBe('delete-artifact');
+            expect(result.broadcast?.message.data.body.artifactId).toBe('artifact-1');
+        });
+
+        it('handleArtifactCreate should return correct broadcast structure', async () => {
+            const mockDb = createMockDb();
+            mockDb._setSelectResults([]);
+            mockDb._setInsertResults([{
+                id: 'artifact-1',
+                header: new Uint8Array([1, 2, 3]),
+                headerVersion: 1,
+                body: new Uint8Array([4, 5, 6]),
+                bodyVersion: 1,
+                seq: 0,
+                createdAt: new Date(),
+                updatedAt: new Date(),
+            }]);
+            mockDb._setUpdateResults([{ seq: 1 }]);
+
+            const ctx = createContext({ db: mockDb as unknown as HandlerContext['db'] });
+
+            const result = await handleArtifactCreate(ctx, {
+                id: 'artifact-1',
+                header: 'SGVhZGVy',
+                body: 'Qm9keQ==',
+                dataEncryptionKey: 'S2V5',
+            });
+
+            expect(result.response?.result).toBe('success');
+            expect(result.broadcast).toBeDefined();
+            expect(result.broadcast?.message.event).toBe('update');
+            expect(result.broadcast?.message.data.body.t).toBe('new-artifact');
+            expect(result.broadcast?.message.data.body.artifactId).toBe('artifact-1');
+        });
+
+        it('handleUsageReport should return correct ephemeral structure with sessionId', async () => {
+            const mockDb = createMockDb();
+            const now = new Date();
+            mockDb._mockFrom.mockImplementationOnce(() => ({
+                where: vi.fn(async () => [{ id: 'session-1' }]),
+            }));
+            mockDb._mockFrom.mockImplementationOnce(() => ({
+                where: vi.fn(async () => []),
+            }));
+            mockDb._setInsertResults([{
+                id: 'report-1',
+                createdAt: now,
+                updatedAt: now,
+            }]);
+
+            const ctx = createContext({ db: mockDb as unknown as HandlerContext['db'] });
+
+            const result = await handleUsageReport(ctx, {
+                key: 'claude-3-sonnet',
+                sessionId: 'session-1',
+                tokens: { total: 100, input: 80, output: 20 },
+                cost: { total: 0.01 },
+            });
+
+            expect(result.response?.success).toBe(true);
+            expect(result.ephemeral).toBeDefined();
+            expect(result.ephemeral?.message.event).toBe('ephemeral');
+            expect(result.ephemeral?.message.data.type).toBe('usage');
+            expect(result.ephemeral?.message.data.key).toBe('claude-3-sonnet');
+            expect(result.ephemeral?.message.data.tokens.total).toBe(100);
+            expect(result.ephemeral?.message.data.tokens.input).toBe(80);
+            expect(result.ephemeral?.message.data.tokens.output).toBe(20);
+            expect(result.ephemeral?.message.data.cost.total).toBe(0.01);
+        });
+    });
+});
+
+// =============================================================================
+// MUTATION TESTING IMPROVEMENTS - Conditional Branch Coverage
+// =============================================================================
+
+describe('Mutation Testing Coverage - Conditional Branch Coverage', () => {
+    describe('handlers - Parameter Type Validation', () => {
+        it('handleSessionMetadataUpdate should return error when metadata type is invalid', async () => {
+            const ctx = createContext();
+
+            const result = await handleSessionMetadataUpdate(ctx, {
+                sid: 'session-1',
+                metadata: 123 as unknown as string,
+                expectedVersion: 1,
+            });
+
+            expect(result.response?.result).toBe('error');
+            expect(result.response?.message).toBe('Invalid parameters');
+        });
+
+        it('handleSessionStateUpdate should return error when agentState type is invalid', async () => {
+            const ctx = createContext();
+
+            const result = await handleSessionStateUpdate(ctx, {
+                sid: 'session-1',
+                agentState: 123 as unknown as string,
+                expectedVersion: 1,
+            });
+
+            expect(result.response?.result).toBe('error');
+            expect(result.response?.message).toBe('Invalid parameters');
+        });
+
+        it('handleMachineMetadataUpdate should return error when metadata type is invalid', async () => {
+            const ctx = createContext();
+
+            const result = await handleMachineMetadataUpdate(ctx, {
+                machineId: 'machine-1',
+                metadata: 123 as unknown as string,
+                expectedVersion: 1,
+            });
+
+            expect(result.response?.result).toBe('error');
+            expect(result.response?.message).toBe('Invalid parameters');
+        });
+
+        it('handleMachineStateUpdate should return error when daemonState type is invalid', async () => {
+            const ctx = createContext();
+
+            const result = await handleMachineStateUpdate(ctx, {
+                machineId: 'machine-1',
+                daemonState: 123 as unknown as string,
+                expectedVersion: 1,
+            });
+
+            expect(result.response?.result).toBe('error');
+            expect(result.response?.message).toBe('Invalid parameters');
+        });
+
+        it('handleArtifactCreate should return error when id is missing', async () => {
+            const ctx = createContext();
+
+            const result = await handleArtifactCreate(ctx, {
+                id: '',
+                header: 'base64',
+                body: 'base64',
+                dataEncryptionKey: 'base64',
+            });
+
+            expect(result.response?.result).toBe('error');
+            expect(result.response?.message).toBe('Invalid parameters');
+        });
+
+        it('handleArtifactCreate should return error when body type is invalid', async () => {
+            const ctx = createContext();
+
+            const result = await handleArtifactCreate(ctx, {
+                id: 'artifact-1',
+                header: 'base64',
+                body: 123 as unknown as string,
+                dataEncryptionKey: 'base64',
+            });
+
+            expect(result.response?.result).toBe('error');
+            expect(result.response?.message).toBe('Invalid parameters');
+        });
+
+        it('handleArtifactCreate should return error when dataEncryptionKey type is invalid', async () => {
+            const ctx = createContext();
+
+            const result = await handleArtifactCreate(ctx, {
+                id: 'artifact-1',
+                header: 'base64',
+                body: 'base64',
+                dataEncryptionKey: 123 as unknown as string,
+            });
+
+            expect(result.response?.result).toBe('error');
+            expect(result.response?.message).toBe('Invalid parameters');
+        });
+
+        it('handleUsageReport should return error when tokens is missing total field', async () => {
+            const ctx = createContext();
+
+            const result = await handleUsageReport(ctx, {
+                key: 'claude-3-sonnet',
+                tokens: { input: 100 } as unknown as { total: number },
+                cost: { total: 0.01 },
+            });
+
+            expect(result.response?.success).toBe(false);
+            expect(result.response?.error).toContain('tokens');
+        });
+
+        it('handleUsageReport should return error when cost is missing total field', async () => {
+            const ctx = createContext();
+
+            const result = await handleUsageReport(ctx, {
+                key: 'claude-3-sonnet',
+                tokens: { total: 100 },
+                cost: { input: 0.01 } as unknown as { total: number },
+            });
+
+            expect(result.response?.success).toBe(false);
+            expect(result.response?.error).toContain('cost');
+        });
+    });
+});
+
+// =============================================================================
+// MUTATION TESTING IMPROVEMENTS - Version Field Assertions
+// =============================================================================
+
+describe('Mutation Testing Coverage - Version Field Assertions', () => {
+    describe('handlers - Exact Version Number Verification', () => {
+        it('handleSessionMetadataUpdate version-mismatch should return exact version numbers', async () => {
+            const mockDb = createMockDb();
+            mockDb._setSelectResults([{
+                id: 'session-1',
+                accountId: 'test-user-123',
+                metadataVersion: 7,
+                metadata: '{"existing":"data"}',
+            }]);
+            const ctx = createContext({ db: mockDb as unknown as HandlerContext['db'] });
+
+            const result = await handleSessionMetadataUpdate(ctx, {
+                sid: 'session-1',
+                metadata: '{"new":"data"}',
+                expectedVersion: 3,
+            });
+
+            expect(result.response?.result).toBe('version-mismatch');
+            expect(result.response?.version).toBe(7);
+            expect(result.response?.metadata).toBe('{"existing":"data"}');
+        });
+
+        it('handleSessionStateUpdate version-mismatch should return exact version numbers', async () => {
+            const mockDb = createMockDb();
+            mockDb._setSelectResults([{
+                id: 'session-1',
+                accountId: 'test-user-123',
+                agentStateVersion: 9,
+                agentState: '{"existing":"state"}',
+            }]);
+            const ctx = createContext({ db: mockDb as unknown as HandlerContext['db'] });
+
+            const result = await handleSessionStateUpdate(ctx, {
+                sid: 'session-1',
+                agentState: '{"new":"state"}',
+                expectedVersion: 5,
+            });
+
+            expect(result.response?.result).toBe('version-mismatch');
+            expect(result.response?.version).toBe(9);
+            expect(result.response?.agentState).toBe('{"existing":"state"}');
+        });
+
+        it('handleMachineMetadataUpdate version-mismatch should return exact version numbers', async () => {
+            const mockDb = createMockDb();
+            mockDb._setSelectResults([{
+                id: 'machine-1',
+                metadataVersion: 11,
+                metadata: '{"existing":"metadata"}',
+            }]);
+            const ctx = createContext({ db: mockDb as unknown as HandlerContext['db'] });
+
+            const result = await handleMachineMetadataUpdate(ctx, {
+                machineId: 'machine-1',
+                metadata: '{"new":"metadata"}',
+                expectedVersion: 7,
+            });
+
+            expect(result.response?.result).toBe('version-mismatch');
+            expect(result.response?.version).toBe(11);
+            expect(result.response?.metadata).toBe('{"existing":"metadata"}');
+        });
+
+        it('handleMachineStateUpdate version-mismatch should return exact version numbers', async () => {
+            const mockDb = createMockDb();
+            mockDb._setSelectResults([{
+                id: 'machine-1',
+                daemonStateVersion: 13,
+                daemonState: '{"existing":"state"}',
+            }]);
+            const ctx = createContext({ db: mockDb as unknown as HandlerContext['db'] });
+
+            const result = await handleMachineStateUpdate(ctx, {
+                machineId: 'machine-1',
+                daemonState: '{"new":"state"}',
+                expectedVersion: 9,
+            });
+
+            expect(result.response?.result).toBe('version-mismatch');
+            expect(result.response?.version).toBe(13);
+            expect(result.response?.daemonState).toBe('{"existing":"state"}');
+        });
+
+        it('handleArtifactUpdate version-mismatch should return exact header version numbers', async () => {
+            const mockDb = createMockDb();
+            mockDb._setSelectResults([{
+                id: 'artifact-1',
+                accountId: 'test-user-123',
+                header: new Uint8Array([1, 2, 3]),
+                headerVersion: 15,
+                body: new Uint8Array([4, 5, 6]),
+                bodyVersion: 5,
+            }]);
+            const ctx = createContext({ db: mockDb as unknown as HandlerContext['db'] });
+
+            const result = await handleArtifactUpdate(ctx, {
+                artifactId: 'artifact-1',
+                header: { data: 'bmV3LWhlYWRlcg==', expectedVersion: 10 },
+            });
+
+            expect(result.response?.result).toBe('version-mismatch');
+            expect(result.response?.header).toBeDefined();
+            expect(result.response?.header?.currentVersion).toBe(15);
+            expect(typeof result.response?.header?.currentData).toBe('string');
+        });
+
+        it('handleArtifactUpdate version-mismatch should return exact body version numbers', async () => {
+            const mockDb = createMockDb();
+            mockDb._setSelectResults([{
+                id: 'artifact-1',
+                accountId: 'test-user-123',
+                header: new Uint8Array([1, 2, 3]),
+                headerVersion: 5,
+                body: new Uint8Array([4, 5, 6]),
+                bodyVersion: 17,
+            }]);
+            const ctx = createContext({ db: mockDb as unknown as HandlerContext['db'] });
+
+            const result = await handleArtifactUpdate(ctx, {
+                artifactId: 'artifact-1',
+                body: { data: 'bmV3LWJvZHk=', expectedVersion: 12 },
+            });
+
+            expect(result.response?.result).toBe('version-mismatch');
+            expect(result.response?.body).toBeDefined();
+            expect(result.response?.body?.currentVersion).toBe(17);
+            expect(typeof result.response?.body?.currentData).toBe('string');
+        });
+    });
+});

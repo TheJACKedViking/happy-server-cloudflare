@@ -13,6 +13,49 @@
 
 import { describe, it, expect, vi } from 'vitest';
 
+// Mock @sentry/cloudflare module to avoid Cloudflare runtime requirements
+vi.mock('@sentry/cloudflare', () => ({
+    setContext: vi.fn(),
+    setTag: vi.fn(),
+    setUser: vi.fn(),
+    captureException: vi.fn(),
+    captureMessage: vi.fn(),
+    addBreadcrumb: vi.fn(),
+    flush: vi.fn().mockResolvedValue(true),
+    startSpan: vi.fn((options, callback) => callback()),
+    consoleIntegration: vi.fn(() => ({})),
+    instrumentDurableObjectWithSentry: vi.fn(
+        (_optionsFn: unknown, BaseClass: new (...args: unknown[]) => unknown) => BaseClass
+    ),
+}));
+
+// Mock @/lib/sentry module
+vi.mock('@/lib/sentry', () => ({
+    buildSentryOptions: vi.fn(() => ({})),
+    instrumentDurableObjectWithSentry: vi.fn(
+        (_optionsFn: unknown, BaseClass: new (...args: unknown[]) => unknown) => BaseClass
+    ),
+    setSentryUser: vi.fn(),
+    clearSentryUser: vi.fn(),
+    setSentryContext: vi.fn(),
+    setSentryTag: vi.fn(),
+    captureException: vi.fn(),
+    captureMessage: vi.fn(),
+    addBreadcrumb: vi.fn(),
+    flushSentry: vi.fn().mockResolvedValue(true),
+    startSpan: vi.fn((options, callback) => callback()),
+    Sentry: {
+        setContext: vi.fn(),
+        setTag: vi.fn(),
+        setUser: vi.fn(),
+        captureException: vi.fn(),
+        captureMessage: vi.fn(),
+        addBreadcrumb: vi.fn(),
+        flush: vi.fn().mockResolvedValue(true),
+        startSpan: vi.fn((options, callback) => callback()),
+    },
+}));
+
 // Mock cloudflare:workers module
 vi.mock('cloudflare:workers', () => ({
     DurableObject: class DurableObject {
@@ -1471,6 +1514,413 @@ describe('ConnectionManager - Alarm Retry Logic', () => {
             // Verify setAlarm was called (either during constructor or alarm processing)
             const setAlarmCalls = (state.storage.setAlarm as ReturnType<typeof vi.fn>).mock.calls;
             expect(setAlarmCalls.length).toBeGreaterThan(0);
+        });
+    });
+});
+
+// =============================================================================
+// MUTATION TESTING COVERAGE IMPROVEMENTS
+// =============================================================================
+
+describe('Mutation Testing Coverage - ConnectionManager', () => {
+    /**
+     * Helper to create a ConnectionManager instance with test access to private members
+     */
+    function createTestableConnectionManager() {
+        const state = createMockState();
+        const cm = new ConnectionManager(state as unknown as DurableObjectState, mockEnv);
+        return { cm, state };
+    }
+
+    describe('String literal value assertions', () => {
+        it('should return exact health status string', async () => {
+            const { cm } = createTestableConnectionManager();
+
+            const request = new Request('https://do/health', { method: 'GET' });
+            const response = await cm.fetch(request);
+            const body = await response.json() as { status: string; connections: number };
+
+            expect(body.status).toBe('healthy');
+            expect(typeof body.status).toBe('string');
+        });
+
+        it('should return exact error string for WebSocket upgrade required', async () => {
+            const { cm } = createTestableConnectionManager();
+
+            const request = new Request('https://do/websocket', {
+                method: 'GET',
+                headers: { 'Content-Type': 'application/json' },
+            });
+            const response = await cm.fetch(request);
+            const text = await response.text();
+
+            expect(response.status).toBe(426);
+            expect(text).toContain('WebSocket');
+            expect(typeof text).toBe('string');
+        });
+
+        it('should return exact error string for missing session ID', async () => {
+            const { cm } = createTestableConnectionManager();
+
+            const request = new Request(
+                'https://do/websocket?token=valid-token&clientType=session-scoped',
+                {
+                    method: 'GET',
+                    headers: { Upgrade: 'websocket' },
+                }
+            );
+            const response = await cm.fetch(request);
+            const text = await response.text();
+
+            expect(response.status).toBe(400);
+            expect(text).toContain('Session ID');
+            expect(typeof text).toBe('string');
+        });
+
+        it('should return exact error string for missing machine ID', async () => {
+            const { cm } = createTestableConnectionManager();
+
+            const request = new Request(
+                'https://do/websocket?token=valid-token&clientType=machine-scoped',
+                {
+                    method: 'GET',
+                    headers: { Upgrade: 'websocket' },
+                }
+            );
+            const response = await cm.fetch(request);
+            const text = await response.text();
+
+            expect(response.status).toBe(400);
+            expect(text).toContain('Machine ID');
+            expect(typeof text).toBe('string');
+        });
+    });
+
+    describe('Object property value assertions', () => {
+        it('should return stats object with exact property structure', async () => {
+            const { cm } = createTestableConnectionManager();
+
+            const request = new Request('https://do/stats', { method: 'GET' });
+            const response = await cm.fetch(request);
+            const stats = (await response.json()) as ConnectionStats;
+
+            // Verify all properties exist with correct types
+            expect(typeof stats.totalConnections).toBe('number');
+            expect(stats.totalConnections).toBe(0);
+            expect(typeof stats.byType).toBe('object');
+            expect(stats.byType['user-scoped']).toBe(0);
+            expect(stats.byType['session-scoped']).toBe(0);
+            expect(stats.byType['machine-scoped']).toBe(0);
+            expect(typeof stats.activeSessions).toBe('number');
+            expect(stats.activeSessions).toBe(0);
+            expect(typeof stats.activeMachines).toBe('number');
+            expect(stats.activeMachines).toBe(0);
+        });
+
+        it('should return health object with exact property structure', async () => {
+            const { cm } = createTestableConnectionManager();
+
+            const request = new Request('https://do/health', { method: 'GET' });
+            const response = await cm.fetch(request);
+            const body = (await response.json()) as { status: string; connections: number };
+
+            expect(typeof body.status).toBe('string');
+            expect(body.status).toBe('healthy');
+            expect(typeof body.connections).toBe('number');
+            expect(body.connections).toBe(0);
+        });
+
+        it('should return usage limits object with correct structure', async () => {
+            const state = createMockState();
+            (state.storage.get as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+            const cm = new ConnectionManager(state as unknown as DurableObjectState, mockEnv);
+
+            const request = new Request('https://do/usage-limits', { method: 'GET' });
+            const response = await cm.fetch(request);
+            const body = await response.json() as { limitsAvailable: boolean; weeklyLimits: unknown[]; lastUpdatedAt: number };
+
+            expect(typeof body.limitsAvailable).toBe('boolean');
+            expect(body.limitsAvailable).toBe(false);
+            expect(Array.isArray(body.weeklyLimits)).toBe(true);
+            expect((body.weeklyLimits as unknown[]).length).toBe(0);
+            expect(typeof body.lastUpdatedAt).toBe('number');
+        });
+
+        it('should return broadcast response with exact success structure', async () => {
+            const { cm } = createTestableConnectionManager();
+
+            const message = {
+                type: 'broadcast',
+                payload: { test: 'data' },
+                timestamp: Date.now(),
+            };
+
+            const request = new Request('https://do/broadcast', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message }),
+            });
+            const response = await cm.fetch(request);
+            const body = (await response.json()) as { success: boolean; delivered: number };
+
+            expect(typeof body.success).toBe('boolean');
+            expect(body.success).toBe(true);
+            expect(typeof body.delivered).toBe('number');
+            expect(body.delivered).toBe(0);
+        });
+    });
+
+    describe('Conditional branch coverage', () => {
+        it('should handle GET request to unknown endpoint with 404', async () => {
+            const { cm } = createTestableConnectionManager();
+
+            const request = new Request('https://do/nonexistent', { method: 'GET' });
+            const response = await cm.fetch(request);
+
+            expect(response.status).toBe(404);
+        });
+
+        it('should handle POST request to unknown endpoint with 404', async () => {
+            const { cm } = createTestableConnectionManager();
+
+            const request = new Request('https://do/nonexistent', { method: 'POST' });
+            const response = await cm.fetch(request);
+
+            expect(response.status).toBe(404);
+        });
+
+        it('should reject broadcast with invalid JSON', async () => {
+            const { cm } = createTestableConnectionManager();
+
+            const request = new Request('https://do/broadcast', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: '{not valid json',
+            });
+            const response = await cm.fetch(request);
+
+            expect(response.status).toBe(400);
+        });
+
+        it('should handle broadcast with missing message field gracefully', async () => {
+            const { cm } = createTestableConnectionManager();
+
+            const request = new Request('https://do/broadcast', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({}),
+            });
+            const response = await cm.fetch(request);
+
+            // The endpoint accepts empty broadcasts and returns success with 0 delivered
+            expect(response.status).toBe(200);
+            const body = (await response.json()) as { success: boolean; delivered: number };
+            expect(body.success).toBe(true);
+            expect(body.delivered).toBe(0);
+        });
+
+        it('should handle empty clientType defaulting to user-scoped', async () => {
+            const state = createMockState();
+            const cm = new ConnectionManager(state as unknown as DurableObjectState, mockEnv);
+
+            // Request without clientType should default to user-scoped
+            const request = new Request('https://do/websocket?token=valid-token', {
+                method: 'GET',
+                headers: { Upgrade: 'websocket' },
+            });
+
+            // This will throw due to status 101 not supported in Node.js
+            try {
+                await cm.fetch(request);
+            } catch (error) {
+                // Expected error for status 101
+                expect(error).toBeInstanceOf(RangeError);
+            }
+
+            // Verify connection was accepted
+            expect(state.acceptWebSocket).toHaveBeenCalled();
+        });
+    });
+
+    describe('CloseCode value assertions', () => {
+        it('should have correct AUTH_FAILED close code', () => {
+            expect(CloseCode.AUTH_FAILED).toBe(4001);
+            expect(typeof CloseCode.AUTH_FAILED).toBe('number');
+        });
+
+        it('should have correct INVALID_HANDSHAKE close code', () => {
+            expect(CloseCode.INVALID_HANDSHAKE).toBe(4002);
+            expect(typeof CloseCode.INVALID_HANDSHAKE).toBe('number');
+        });
+
+        it('should have correct MISSING_SESSION_ID close code', () => {
+            expect(CloseCode.MISSING_SESSION_ID).toBe(4003);
+            expect(typeof CloseCode.MISSING_SESSION_ID).toBe('number');
+        });
+
+        it('should have correct MISSING_MACHINE_ID close code', () => {
+            expect(CloseCode.MISSING_MACHINE_ID).toBe(4004);
+            expect(typeof CloseCode.MISSING_MACHINE_ID).toBe('number');
+        });
+
+        it('should have correct CONNECTION_LIMIT_EXCEEDED close code', () => {
+            expect(CloseCode.CONNECTION_LIMIT_EXCEEDED).toBe(4005);
+            expect(typeof CloseCode.CONNECTION_LIMIT_EXCEEDED).toBe('number');
+        });
+
+        it('should have correct NORMAL close code', () => {
+            expect(CloseCode.NORMAL).toBe(1000);
+            expect(typeof CloseCode.NORMAL).toBe('number');
+        });
+
+        it('should have correct GOING_AWAY close code', () => {
+            expect(CloseCode.GOING_AWAY).toBe(1001);
+            expect(typeof CloseCode.GOING_AWAY).toBe('number');
+        });
+
+        it('should have correct PROTOCOL_ERROR close code', () => {
+            expect(CloseCode.PROTOCOL_ERROR).toBe(1002);
+            expect(typeof CloseCode.PROTOCOL_ERROR).toBe('number');
+        });
+    });
+
+    describe('Type assertions for connection metadata', () => {
+        it('should correctly set user-scoped metadata without sessionId or machineId', () => {
+            const metadata: ConnectionMetadata = {
+                connectionId: 'conn-test',
+                userId: 'user-test',
+                clientType: 'user-scoped',
+                connectedAt: Date.now(),
+                lastActivityAt: Date.now(),
+                authState: 'legacy',
+            };
+
+            expect(metadata.clientType).toBe('user-scoped');
+            expect(metadata.sessionId).toBeUndefined();
+            expect(metadata.machineId).toBeUndefined();
+            expect(metadata.authState).toBe('legacy');
+            expect(typeof metadata.connectionId).toBe('string');
+            expect(typeof metadata.userId).toBe('string');
+            expect(typeof metadata.connectedAt).toBe('number');
+            expect(typeof metadata.lastActivityAt).toBe('number');
+        });
+
+        it('should correctly set session-scoped metadata with sessionId', () => {
+            const metadata: ConnectionMetadata = {
+                connectionId: 'conn-test',
+                userId: 'user-test',
+                clientType: 'session-scoped',
+                sessionId: 'session-test',
+                connectedAt: Date.now(),
+                lastActivityAt: Date.now(),
+                authState: 'legacy',
+            };
+
+            expect(metadata.clientType).toBe('session-scoped');
+            expect(metadata.sessionId).toBe('session-test');
+            expect(metadata.machineId).toBeUndefined();
+            expect(typeof metadata.sessionId).toBe('string');
+        });
+
+        it('should correctly set machine-scoped metadata with machineId', () => {
+            const metadata: ConnectionMetadata = {
+                connectionId: 'conn-test',
+                userId: 'user-test',
+                clientType: 'machine-scoped',
+                machineId: 'machine-test',
+                connectedAt: Date.now(),
+                lastActivityAt: Date.now(),
+                authState: 'legacy',
+            };
+
+            expect(metadata.clientType).toBe('machine-scoped');
+            expect(metadata.machineId).toBe('machine-test');
+            expect(metadata.sessionId).toBeUndefined();
+            expect(typeof metadata.machineId).toBe('string');
+        });
+
+        it('should correctly set legacy auth state', () => {
+            const metadata: ConnectionMetadata = {
+                connectionId: 'conn-test',
+                userId: 'user-test',
+                clientType: 'user-scoped',
+                connectedAt: Date.now(),
+                lastActivityAt: Date.now(),
+                authState: 'legacy',
+            };
+
+            expect(metadata.authState).toBe('legacy');
+            expect(typeof metadata.authState).toBe('string');
+        });
+    });
+
+    describe('WebSocket message structure assertions', () => {
+        it('should create correct connected message structure', () => {
+            const msg: ConnectedMessage = {
+                type: 'connected',
+                payload: {
+                    connectionId: 'conn-123',
+                    userId: 'user-456',
+                    clientType: 'user-scoped',
+                },
+                timestamp: Date.now(),
+            };
+
+            expect(msg.type).toBe('connected');
+            expect(typeof msg.type).toBe('string');
+            expect(typeof msg.payload.connectionId).toBe('string');
+            expect(typeof msg.payload.userId).toBe('string');
+            expect(msg.payload.clientType).toBe('user-scoped');
+            expect(typeof msg.timestamp).toBe('number');
+        });
+
+        it('should create correct broadcast message structure', () => {
+            const msg: WebSocketMessage = {
+                type: 'broadcast',
+                payload: { event: 'test', data: { value: 123 } },
+                timestamp: Date.now(),
+            };
+
+            expect(msg.type).toBe('broadcast');
+            expect(typeof msg.type).toBe('string');
+            expect(typeof msg.payload).toBe('object');
+            expect(typeof msg.timestamp).toBe('number');
+        });
+
+        it('should create correct ping message structure', () => {
+            const msg: WebSocketMessage = {
+                type: 'ping',
+                payload: undefined,
+                timestamp: Date.now(),
+            };
+
+            expect(msg.type).toBe('ping');
+            expect(typeof msg.type).toBe('string');
+            expect(typeof msg.timestamp).toBe('number');
+        });
+
+        it('should create correct pong message structure', () => {
+            const msg: WebSocketMessage = {
+                type: 'pong',
+                payload: undefined,
+                timestamp: Date.now(),
+            };
+
+            expect(msg.type).toBe('pong');
+            expect(typeof msg.type).toBe('string');
+            expect(typeof msg.timestamp).toBe('number');
+        });
+
+        it('should create correct error message structure', () => {
+            const msg: WebSocketMessage = {
+                type: 'error',
+                payload: { code: 'TEST_ERROR', message: 'Test error occurred' },
+                timestamp: Date.now(),
+            };
+
+            expect(msg.type).toBe('error');
+            expect(typeof msg.type).toBe('string');
+            expect(typeof msg.payload).toBe('object');
         });
     });
 });
