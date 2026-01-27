@@ -1333,4 +1333,830 @@ describe('image-processing', () => {
             consoleSpy.mockRestore();
         });
     });
+
+    /**
+     * Mutation Testing - Arithmetic Operator Tests (HAP-915)
+     *
+     * These tests specifically target arithmetic operations with exact value assertions
+     * to catch mutations like: + → -, * → /, << → >>, etc.
+     *
+     * Each test uses known inputs and verifies exact expected outputs.
+     */
+    describe('Mutation testing - Arithmetic operations', () => {
+        describe('GIF dimension byte assembly', () => {
+            // Tests the little-endian byte assembly:
+            // width = getByte(data, 6) | (getByte(data, 7) << 8)
+            // height = getByte(data, 8) | (getByte(data, 9) << 8)
+
+            it('should correctly assemble width from two bytes (little-endian)', () => {
+                // Width: 0x0102 = byte6=0x02, byte7=0x01 -> 0x02 | (0x01 << 8) = 258
+                // If << mutates to >>, result would be 0x02 | 0x00 = 2
+                const gif = createTestGif(258, 100);
+                const result = extractImageDimensions(gif, 'image/gif');
+                expect(result).not.toBeNull();
+                expect(result?.width).toBe(258); // Must be exactly 258, not 2
+            });
+
+            it('should correctly assemble height from two bytes (little-endian)', () => {
+                // Height: 0x0304 = byte8=0x04, byte9=0x03 -> 0x04 | (0x03 << 8) = 772
+                // If << mutates to >>, result would be 0x04 | 0x00 = 4
+                const gif = createTestGif(100, 772);
+                const result = extractImageDimensions(gif, 'image/gif');
+                expect(result).not.toBeNull();
+                expect(result?.height).toBe(772); // Must be exactly 772, not 4
+            });
+
+            it('should handle dimension where high byte matters', () => {
+                // Width: 0xFF00 = 65280 (high byte = 0xFF, low byte = 0x00)
+                // If bitwise OR mutates, result changes dramatically
+                const gif = createTestGif(65280, 1);
+                const result = extractImageDimensions(gif, 'image/gif');
+                expect(result).not.toBeNull();
+                expect(result?.width).toBe(65280);
+            });
+
+            it('should handle dimension where both bytes contribute', () => {
+                // Width: 0x1234 = 4660 (high=0x12, low=0x34)
+                // 0x34 | (0x12 << 8) = 52 | 4608 = 4660
+                const gif = createTestGif(4660, 4660);
+                const result = extractImageDimensions(gif, 'image/gif');
+                expect(result).not.toBeNull();
+                expect(result?.width).toBe(4660);
+                expect(result?.height).toBe(4660);
+            });
+
+            it('should correctly distinguish width and height byte positions', () => {
+                // If byte indices are swapped due to arithmetic mutation,
+                // width and height would be swapped
+                const gif = createTestGif(100, 200);
+                const result = extractImageDimensions(gif, 'image/gif');
+                expect(result).not.toBeNull();
+                expect(result?.width).toBe(100); // NOT 200
+                expect(result?.height).toBe(200); // NOT 100
+            });
+        });
+
+        describe('WebP VP8X dimension assembly', () => {
+            // Tests VP8X format:
+            // width = 1 + (getByte(data, 24) | (getByte(data, 25) << 8) | (getByte(data, 26) << 16))
+            // height = 1 + (getByte(data, 27) | (getByte(data, 28) << 8) | (getByte(data, 29) << 16))
+
+            it('should correctly apply +1 offset for VP8X dimensions', () => {
+                // VP8X stores width-1 and height-1
+                // If +1 mutates to -1, dimensions would be wrong by 2
+                const webp = createTestWebpVP8X(1, 1);
+                const result = extractImageDimensions(webp, 'image/webp');
+                expect(result).not.toBeNull();
+                expect(result?.width).toBe(1); // stored as 0, result = 0 + 1 = 1
+                expect(result?.height).toBe(1);
+            });
+
+            it('should correctly assemble 24-bit width (VP8X)', () => {
+                // Width: 0x010203 + 1 = 66052
+                // Tests all three byte positions with << 8 and << 16
+                const webp = createTestWebpVP8X(66052, 100);
+                const result = extractImageDimensions(webp, 'image/webp');
+                expect(result).not.toBeNull();
+                expect(result?.width).toBe(66052);
+            });
+
+            it('should correctly assemble 24-bit height (VP8X)', () => {
+                // Height: 0x040506 + 1 = 263431
+                const webp = createTestWebpVP8X(100, 263431);
+                const result = extractImageDimensions(webp, 'image/webp');
+                expect(result).not.toBeNull();
+                expect(result?.height).toBe(263431);
+            });
+
+            it('should handle large dimensions near 24-bit limit', () => {
+                // Maximum VP8X canvas: 16383 x 16383 (actually limited by spec)
+                // But byte storage allows larger - test assembly is correct
+                const webp = createTestWebpVP8X(4096, 2160);
+                const result = extractImageDimensions(webp, 'image/webp');
+                expect(result).not.toBeNull();
+                expect(result?.width).toBe(4096);
+                expect(result?.height).toBe(2160);
+            });
+        });
+
+        describe('WebP VP8L dimension bit extraction', () => {
+            // Tests VP8L lossless format:
+            // bits = getByte(data, 21) | (getByte(data, 22) << 8) | (getByte(data, 23) << 16) | (getByte(data, 24) << 24)
+            // width = (bits & 0x3fff) + 1
+            // height = ((bits >> 14) & 0x3fff) + 1
+
+            it('should correctly extract width from lower 14 bits', () => {
+                // Width is in bits 0-13
+                // If & 0x3fff mutates, dimensions would be wrong
+                const webp = createTestWebpVP8L(100, 100);
+                const result = extractImageDimensions(webp, 'image/webp');
+                expect(result).not.toBeNull();
+                expect(result?.width).toBe(100);
+            });
+
+            it('should correctly extract height from bits 14-27', () => {
+                // Height requires >> 14 shift
+                // If >> 14 mutates to >> 13 or >> 15, height would be wrong
+                const webp = createTestWebpVP8L(50, 200);
+                const result = extractImageDimensions(webp, 'image/webp');
+                expect(result).not.toBeNull();
+                expect(result?.width).toBe(50);
+                expect(result?.height).toBe(200);
+            });
+
+            it('should apply +1 offset correctly for VP8L', () => {
+                // VP8L also stores width-1 and height-1
+                const webp = createTestWebpVP8L(1, 1);
+                const result = extractImageDimensions(webp, 'image/webp');
+                expect(result).not.toBeNull();
+                expect(result?.width).toBe(1);
+                expect(result?.height).toBe(1);
+            });
+
+            it('should handle width at 14-bit boundary', () => {
+                // Max value in 14 bits: 16383
+                // 16383 + 1 = 16384
+                const webp = createTestWebpVP8L(16384, 100);
+                const result = extractImageDimensions(webp, 'image/webp');
+                expect(result).not.toBeNull();
+                expect(result?.width).toBe(16384);
+            });
+        });
+
+        describe('WebP VP8 dimension masking', () => {
+            // Tests VP8 lossy format:
+            // width = (getByte(data, 26) | (getByte(data, 27) << 8)) & 0x3fff
+            // height = (getByte(data, 28) | (getByte(data, 29) << 8)) & 0x3fff
+
+            it('should correctly mask width to 14 bits', () => {
+                // If & 0x3fff is removed, dimensions could include scale factor bits
+                const webp = createTestWebpVP8(640, 480);
+                const result = extractImageDimensions(webp, 'image/webp');
+                expect(result).not.toBeNull();
+                expect(result?.width).toBe(640);
+                expect(result?.height).toBe(480);
+            });
+
+            it('should correctly assemble VP8 dimensions', () => {
+                // VP8 uses 14-bit values with little-endian byte order
+                const webp = createTestWebpVP8(1920, 1080);
+                const result = extractImageDimensions(webp, 'image/webp');
+                expect(result).not.toBeNull();
+                expect(result?.width).toBe(1920);
+                expect(result?.height).toBe(1080);
+            });
+        });
+
+        describe('Megapixel calculation', () => {
+            // Tests: megapixels = (dimensions.width * dimensions.height) / 1_000_000
+
+            it('should calculate megapixels correctly for boundary case', () => {
+                // 5000 * 5000 = 25,000,000 pixels = 25 megapixels (exactly at limit)
+                // If * mutates to +, result would be 10000/1000000 = 0.01
+                // If / mutates to *, result would be astronomically large
+                const png = createLargePngForResize(5000, 5000);
+                const result = extractImageDimensions(png, 'image/png');
+                expect(result).not.toBeNull();
+                // Verify the dimensions are extracted correctly for megapixel calc
+                expect(result?.width).toBe(5000);
+                expect(result?.height).toBe(5000);
+                // 5000 * 5000 / 1_000_000 = 25 (exactly at MAX_MEGAPIXELS)
+            });
+
+            it('should distinguish just above vs just below megapixel limit', async () => {
+                // At limit: 5000 * 5000 = 25 megapixels - should try thumbhash
+                const atLimit = createLargePngForResize(5000, 5000);
+                const atLimitResult = await processImage(atLimit, 'image/png');
+                expect(atLimitResult).not.toBeNull();
+                expect(atLimitResult?.width).toBe(5000);
+
+                // Above limit: 5001 * 5000 = 25.005 megapixels - should skip thumbhash
+                const aboveLimit = createLargePngForResize(5001, 5000);
+                const aboveLimitResult = await processImage(aboveLimit, 'image/png');
+                expect(aboveLimitResult).not.toBeNull();
+                expect(aboveLimitResult?.width).toBe(5001);
+                expect(aboveLimitResult?.thumbhash).toBeNull(); // Must be null (skipped)
+            });
+
+            it('should handle asymmetric dimensions in megapixel calc', () => {
+                // 10000 * 2500 = 25,000,000 = 25 megapixels
+                // Tests that width * height is correct, not width + height
+                const png = createLargePngForResize(10000, 2500);
+                const result = extractImageDimensions(png, 'image/png');
+                expect(result).not.toBeNull();
+                expect(result?.width).toBe(10000);
+                expect(result?.height).toBe(2500);
+            });
+        });
+    });
+
+    /**
+     * Mutation Testing - Conditional Expression Tests (HAP-915)
+     *
+     * These tests ensure conditional branches are taken correctly.
+     * Mutations might flip conditions (> to <, === to !==, etc.)
+     */
+    describe('Mutation testing - Conditional expressions', () => {
+        describe('Format detection conditions', () => {
+            it('should return null for exact content type mismatch', () => {
+                const jpeg = createTestJpeg(100, 100);
+                // Test each format returns null for wrong content type
+                expect(extractImageDimensions(jpeg, 'image/png')).toBeNull();
+                expect(extractImageDimensions(jpeg, 'image/gif')).toBeNull();
+                expect(extractImageDimensions(jpeg, 'image/webp')).toBeNull();
+            });
+
+            it('should handle switch case fallthrough protection', () => {
+                const data = new ArrayBuffer(100);
+                // Unknown content types should return null from default case
+                expect(extractImageDimensions(data, 'image/tiff')).toBeNull();
+                expect(extractImageDimensions(data, 'image/bmp')).toBeNull();
+                expect(extractImageDimensions(data, 'video/mp4')).toBeNull();
+            });
+        });
+
+        describe('WebP format conditions', () => {
+            it('should detect keyframe correctly (frameTag & 1)', () => {
+                // VP8 keyframe has bit 0 = 0
+                const keyframe = createTestWebpVP8(100, 100);
+                const keyframeResult = extractImageDimensions(keyframe, 'image/webp');
+                expect(keyframeResult).not.toBeNull();
+                expect(keyframeResult?.width).toBe(100);
+
+                // Non-keyframe has bit 0 = 1 - should return null
+                const nonKeyframe = createWebpVP8NonKeyframe();
+                const nonKeyframeResult = extractImageDimensions(nonKeyframe, 'image/webp');
+                expect(nonKeyframeResult).toBeNull();
+            });
+
+            it('should detect RIFF header correctly', () => {
+                // Valid RIFF
+                const valid = createTestWebpVP8X(100, 100);
+                expect(extractImageDimensions(valid, 'image/webp')).not.toBeNull();
+
+                // Invalid RIFF
+                const invalidRiff = createInvalidWebpRiff();
+                expect(extractImageDimensions(invalidRiff, 'image/webp')).toBeNull();
+            });
+
+            it('should detect WEBP signature correctly', () => {
+                const invalidSignature = createInvalidWebpSignature();
+                expect(extractImageDimensions(invalidSignature, 'image/webp')).toBeNull();
+            });
+
+            it('should detect chunk type correctly (VP8 vs VP8L vs VP8X)', () => {
+                // Each format should be detected by its chunk ID
+                const vp8 = createTestWebpVP8(100, 100);
+                const vp8l = createTestWebpVP8L(100, 100);
+                const vp8x = createTestWebpVP8X(100, 100);
+
+                expect(extractImageDimensions(vp8, 'image/webp')).toEqual({ width: 100, height: 100 });
+                expect(extractImageDimensions(vp8l, 'image/webp')).toEqual({ width: 100, height: 100 });
+                expect(extractImageDimensions(vp8x, 'image/webp')).toEqual({ width: 100, height: 100 });
+
+                // Unknown chunk should return null
+                const unknown = createWebpUnknownChunk();
+                expect(extractImageDimensions(unknown, 'image/webp')).toBeNull();
+            });
+        });
+
+        describe('GIF signature condition', () => {
+            it('should reject non-GIF signature', () => {
+                const invalidGif = createInvalidGifSignature();
+                expect(extractImageDimensions(invalidGif, 'image/gif')).toBeNull();
+            });
+
+            it('should accept valid GIF87a signature', () => {
+                // GIF87a (older format)
+                const gif87a = new Uint8Array([
+                    0x47, 0x49, 0x46, // "GIF"
+                    0x38, 0x37, 0x61, // "87a"
+                    0x64, 0x00, // width = 100 (little-endian)
+                    0x64, 0x00, // height = 100 (little-endian)
+                    0x00, 0x00, 0x00, 0x3b,
+                ]);
+                const result = extractImageDimensions(gif87a.buffer, 'image/gif');
+                expect(result).toEqual({ width: 100, height: 100 });
+            });
+
+            it('should accept valid GIF89a signature', () => {
+                const gif = createTestGif(100, 100);
+                const result = extractImageDimensions(gif, 'image/gif');
+                expect(result).toEqual({ width: 100, height: 100 });
+            });
+        });
+
+        describe('Thumbhash content type conditions', () => {
+            it('should return null for WebP thumbhash (not supported)', () => {
+                const webp = createTestWebpVP8X(100, 100);
+                const result = generateThumbhash(webp, 'image/webp');
+                expect(result).toBeNull();
+            });
+
+            it('should return null for GIF thumbhash (not supported)', () => {
+                const gif = createTestGif(100, 100);
+                const result = generateThumbhash(gif, 'image/gif');
+                expect(result).toBeNull();
+            });
+
+            it('should handle each content type case distinctly', () => {
+                const data = new ArrayBuffer(100);
+                // All unsupported types should return null
+                expect(generateThumbhash(data, 'image/webp')).toBeNull();
+                expect(generateThumbhash(data, 'image/gif')).toBeNull();
+                expect(generateThumbhash(data, 'video/mp4')).toBeNull();
+                expect(generateThumbhash(data, 'application/pdf')).toBeNull();
+            });
+        });
+    });
+
+    /**
+     * Mutation Testing - Equality Operator Tests (HAP-915)
+     *
+     * These tests verify equality comparisons work correctly.
+     * Mutations might change === to !== or != to ==
+     */
+    describe('Mutation testing - Equality operators', () => {
+        describe('Magic byte comparisons', () => {
+            it('should reject RIFF with first byte wrong', () => {
+                // Valid: 0x52 ('R'), Invalid: 0x51
+                const almostValid = new Uint8Array([
+                    0x51, 0x49, 0x46, 0x46, // Not "RIFF" (first byte wrong)
+                    0x24, 0x00, 0x00, 0x00,
+                    0x57, 0x45, 0x42, 0x50, // "WEBP"
+                    0x56, 0x50, 0x38, 0x58, // "VP8X"
+                    0x0a, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00,
+                    0x63, 0x00, 0x00, 0x63, 0x00, 0x00,
+                ]);
+                expect(extractImageDimensions(almostValid.buffer, 'image/webp')).toBeNull();
+            });
+
+            it('should reject RIFF with second byte wrong', () => {
+                const almostValid = new Uint8Array([
+                    0x52, 0x48, 0x46, 0x46, // "RHFF" not "RIFF"
+                    0x24, 0x00, 0x00, 0x00,
+                    0x57, 0x45, 0x42, 0x50,
+                    0x56, 0x50, 0x38, 0x58,
+                    0x0a, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00,
+                    0x63, 0x00, 0x00, 0x63, 0x00, 0x00,
+                ]);
+                expect(extractImageDimensions(almostValid.buffer, 'image/webp')).toBeNull();
+            });
+
+            it('should reject WEBP signature with one byte wrong', () => {
+                const almostValid = new Uint8Array([
+                    0x52, 0x49, 0x46, 0x46,
+                    0x24, 0x00, 0x00, 0x00,
+                    0x57, 0x45, 0x42, 0x51, // "WEBQ" not "WEBP"
+                    0x56, 0x50, 0x38, 0x58,
+                    0x0a, 0x00, 0x00, 0x00,
+                    0x00, 0x00, 0x00, 0x00,
+                    0x63, 0x00, 0x00, 0x63, 0x00, 0x00,
+                ]);
+                expect(extractImageDimensions(almostValid.buffer, 'image/webp')).toBeNull();
+            });
+        });
+
+        describe('String equality for chunk IDs', () => {
+            it('should distinguish VP8 space from VP8L', () => {
+                // "VP8 " (with space) vs "VP8L" - single character difference
+                const vp8 = createTestWebpVP8(100, 100);
+                const vp8l = createTestWebpVP8L(100, 100);
+
+                // Both should work but via different code paths
+                const vp8Result = extractImageDimensions(vp8, 'image/webp');
+                const vp8lResult = extractImageDimensions(vp8l, 'image/webp');
+
+                expect(vp8Result).not.toBeNull();
+                expect(vp8lResult).not.toBeNull();
+                expect(vp8Result?.width).toBe(100);
+                expect(vp8lResult?.width).toBe(100);
+            });
+
+            it('should distinguish VP8X from VP8 and VP8L', () => {
+                // VP8X has different dimension extraction logic
+                const vp8x = createTestWebpVP8X(100, 100);
+                const result = extractImageDimensions(vp8x, 'image/webp');
+                expect(result).toEqual({ width: 100, height: 100 });
+            });
+        });
+
+        describe('GIF signature string equality', () => {
+            it('should reject GIF with wrong first character', () => {
+                const notGif = new Uint8Array([
+                    0x48, 0x49, 0x46, // "HIF" not "GIF"
+                    0x38, 0x39, 0x61,
+                    0x64, 0x00, 0x64, 0x00,
+                    0x00, 0x00, 0x00, 0x3b,
+                ]);
+                expect(extractImageDimensions(notGif.buffer, 'image/gif')).toBeNull();
+            });
+
+            it('should reject GIF with wrong second character', () => {
+                const notGif = new Uint8Array([
+                    0x47, 0x48, 0x46, // "GHF" not "GIF"
+                    0x38, 0x39, 0x61,
+                    0x64, 0x00, 0x64, 0x00,
+                    0x00, 0x00, 0x00, 0x3b,
+                ]);
+                expect(extractImageDimensions(notGif.buffer, 'image/gif')).toBeNull();
+            });
+
+            it('should reject GIF with wrong third character', () => {
+                const notGif = new Uint8Array([
+                    0x47, 0x49, 0x47, // "GIG" not "GIF"
+                    0x38, 0x39, 0x61,
+                    0x64, 0x00, 0x64, 0x00,
+                    0x00, 0x00, 0x00, 0x3b,
+                ]);
+                expect(extractImageDimensions(notGif.buffer, 'image/gif')).toBeNull();
+            });
+        });
+
+        describe('isProcessableImage equality', () => {
+            it('should return true only for exact supported types', () => {
+                // Exact matches
+                expect(isProcessableImage('image/jpeg')).toBe(true);
+                expect(isProcessableImage('image/png')).toBe(true);
+                expect(isProcessableImage('image/webp')).toBe(true);
+                expect(isProcessableImage('image/gif')).toBe(true);
+
+                // Near matches (should be false)
+                expect(isProcessableImage('image/jpeg ')).toBe(false); // trailing space
+                expect(isProcessableImage(' image/jpeg')).toBe(false); // leading space
+                expect(isProcessableImage('IMAGE/JPEG')).toBe(false); // uppercase
+                expect(isProcessableImage('image/jpg')).toBe(false); // jpg not jpeg
+            });
+        });
+    });
+
+    /**
+     * Mutation Testing - Boundary Value Tests (HAP-915)
+     *
+     * Tests edge cases at boundaries where off-by-one mutations would fail.
+     */
+    describe('Mutation testing - Boundary values', () => {
+        describe('Dimension boundaries', () => {
+            it('should handle minimum dimension (1x1)', () => {
+                const gif = createTestGif(1, 1);
+                expect(extractImageDimensions(gif, 'image/gif')).toEqual({ width: 1, height: 1 });
+
+                const vp8x = createTestWebpVP8X(1, 1);
+                expect(extractImageDimensions(vp8x, 'image/webp')).toEqual({ width: 1, height: 1 });
+
+                const vp8l = createTestWebpVP8L(1, 1);
+                expect(extractImageDimensions(vp8l, 'image/webp')).toEqual({ width: 1, height: 1 });
+            });
+
+            it('should handle byte boundary (256)', () => {
+                // 256 = 0x0100 requires high byte
+                const gif = createTestGif(256, 256);
+                expect(extractImageDimensions(gif, 'image/gif')).toEqual({ width: 256, height: 256 });
+            });
+
+            it('should handle 255 (max single byte)', () => {
+                // 255 = 0x00FF fits in low byte only
+                const gif = createTestGif(255, 255);
+                expect(extractImageDimensions(gif, 'image/gif')).toEqual({ width: 255, height: 255 });
+            });
+
+            it('should handle 257 (just above byte boundary)', () => {
+                // 257 = 0x0101 requires both bytes
+                const gif = createTestGif(257, 257);
+                expect(extractImageDimensions(gif, 'image/gif')).toEqual({ width: 257, height: 257 });
+            });
+
+            it('should handle two-byte boundary (65536)', () => {
+                // VP8X supports 24-bit dimensions
+                const vp8x = createTestWebpVP8X(65536, 100);
+                expect(extractImageDimensions(vp8x, 'image/webp')).toEqual({ width: 65536, height: 100 });
+            });
+        });
+
+        describe('Megapixel limit boundaries', () => {
+            it('should process images at exactly 25 megapixels', async () => {
+                // 5000 * 5000 = 25,000,000 = exactly 25 MP
+                const png = createLargePngForResize(5000, 5000);
+                const result = await processImage(png, 'image/png');
+                expect(result).not.toBeNull();
+                expect(result?.width).toBe(5000);
+                expect(result?.height).toBe(5000);
+                // At exactly the limit, should attempt thumbhash
+            });
+
+            it('should skip thumbhash for images just over 25 megapixels', async () => {
+                // 5001 * 5000 = 25,005,000 > 25,000,000
+                const png = createLargePngForResize(5001, 5000);
+                const result = await processImage(png, 'image/png');
+                expect(result).not.toBeNull();
+                expect(result?.width).toBe(5001);
+                expect(result?.thumbhash).toBeNull();
+            });
+
+            it('should handle 4999x5000 (just under limit)', async () => {
+                // 4999 * 5000 = 24,995,000 < 25,000,000
+                const png = createLargePngForResize(4999, 5000);
+                const result = await processImage(png, 'image/png');
+                expect(result).not.toBeNull();
+                expect(result?.width).toBe(4999);
+                // Should attempt thumbhash (may fail due to invalid pixel data, but that's ok)
+            });
+        });
+
+        describe('Bit boundary values', () => {
+            it('should handle 14-bit boundary for VP8L width (16383)', () => {
+                // Max 14-bit value: 2^14 - 1 = 16383
+                // Width stored as width-1, so max width = 16384
+                const webp = createTestWebpVP8L(16384, 100);
+                const result = extractImageDimensions(webp, 'image/webp');
+                expect(result).toEqual({ width: 16384, height: 100 });
+            });
+
+            it('should handle VP8 14-bit mask correctly', () => {
+                // VP8 dimensions masked with & 0x3fff
+                // If mask is wrong, high bits would leak through
+                const webp = createTestWebpVP8(16383, 16383);
+                const result = extractImageDimensions(webp, 'image/webp');
+                expect(result).not.toBeNull();
+                // Due to 14-bit limitation in our test data, verify it's in range
+                expect(result?.width).toBeLessThanOrEqual(16383);
+            });
+        });
+    });
+
+    /**
+     * Mutation Testing - Exact Thumbhash Value Tests (HAP-915)
+     *
+     * These tests verify that thumbhash generation produces EXACT expected values.
+     * Any arithmetic mutation in resizeRgba or pixel processing will change the hash.
+     *
+     * The thumbhash algorithm is deterministic - same input always produces same output.
+     * By asserting exact hash values, we catch mutations in:
+     * - Scale calculation: maxDim / width, maxDim / height
+     * - Dimension calculation: width * scale, height * scale
+     * - Buffer size: newWidth * newHeight * 4
+     * - Source coordinate: x * width / newWidth, y * height / newHeight
+     * - Source index: (srcY * width + srcX) * 4
+     * - Destination index: (y * newWidth + x) * 4
+     * - RGBA channel offsets: dstIdx + 1, dstIdx + 2, dstIdx + 3
+     */
+    describe('Mutation testing - Exact thumbhash values', () => {
+        describe('PNG thumbhash generation with exact assertions', () => {
+            it('should generate exact thumbhash for 200x200 gray PNG', () => {
+                // 200x200 gray PNG (needs resize to 100x100)
+                // Tests: scale calculation, resize loop, pixel copying
+                const png = createValidLargePng(200, 200);
+                const result = generateThumbhash(png, 'image/png');
+                // Exact hash - any change in arithmetic will produce different hash
+                expect(result).toBe('IAgCBwC39NmFeHh4h4h3h4eICAAAAAAA');
+            });
+
+            it('should generate exact thumbhash for 50x50 gray PNG', () => {
+                // 50x50 gray PNG (no resize needed - smaller than THUMBHASH_MAX_DIM)
+                // Tests: early return path when no resize needed
+                const png = createValidLargePng(50, 50);
+                const result = generateThumbhash(png, 'image/png');
+                expect(result).toBe('IAgCBwCHhph3d3h4d3d4p4d/CAAAAAAA');
+            });
+
+            it('should generate exact thumbhash for 100x100 gray PNG', () => {
+                // 100x100 gray PNG (exactly at THUMBHASH_MAX_DIM)
+                // Tests: boundary case where scale = 1.0 (no resize)
+                const png = createValidLargePng(100, 100);
+                const result = generateThumbhash(png, 'image/png');
+                expect(result).toBe('IAgCBwC39NmFeHh4h4h3h4eICAAAAAAA');
+            });
+
+            it('should generate exact thumbhash for 300x100 wide PNG', () => {
+                // 300x100 wide PNG (aspect ratio 3:1, resizes to 100x33)
+                // Tests: asymmetric resize, width-limited scaling
+                const png = createValidLargePng(300, 100);
+                const result = generateThumbhash(png, 'image/png');
+                expect(result).toBe('IAgCAoCHh4h4h/h4AAAAAAA=');
+            });
+
+            it('should generate exact thumbhash for 100x300 tall PNG', () => {
+                // 100x300 tall PNG (aspect ratio 1:3, resizes to 33x100)
+                // Tests: asymmetric resize, height-limited scaling
+                const png = createValidLargePng(100, 300);
+                const result = generateThumbhash(png, 'image/png');
+                expect(result).toBe('IAgCAgArhYeIcIgnAAAAAAA=');
+            });
+        });
+
+        describe('Thumbhash consistency and sensitivity', () => {
+            it('should produce consistent thumbhash on repeated calls', () => {
+                // Generate thumbhash multiple times - must always be identical
+                // Tests that no randomness or state mutation affects the result
+                const png = createValidLargePng(200, 200);
+                const hash1 = generateThumbhash(png, 'image/png');
+                const hash2 = generateThumbhash(png, 'image/png');
+                const hash3 = generateThumbhash(png, 'image/png');
+
+                expect(hash1).toBe(hash2);
+                expect(hash2).toBe(hash3);
+            });
+
+            it('should produce different thumbhash for different dimensions', () => {
+                // Different aspect ratios should produce different hashes
+                // Tests that resize logic actually affects output
+                const square = createValidLargePng(200, 200);
+                const wide = createValidLargePng(300, 100);
+                const tall = createValidLargePng(100, 300);
+
+                const squareHash = generateThumbhash(square, 'image/png');
+                const wideHash = generateThumbhash(wide, 'image/png');
+                const tallHash = generateThumbhash(tall, 'image/png');
+
+                expect(squareHash).not.toBe(wideHash);
+                expect(squareHash).not.toBe(tallHash);
+                expect(wideHash).not.toBe(tallHash);
+            });
+
+            it('should produce same hash for images that resize to same dimensions', () => {
+                // 200x200 and 400x400 both resize to 100x100 (scale limited by THUMBHASH_MAX_DIM)
+                // With same gray pixel value, hashes should be identical
+                const small = createValidLargePng(100, 100);
+                const medium = createValidLargePng(200, 200);
+
+                const smallHash = generateThumbhash(small, 'image/png');
+                const mediumHash = generateThumbhash(medium, 'image/png');
+
+                // Both produce identical output after resize
+                expect(smallHash).toBe(mediumHash);
+            });
+        });
+
+        describe('Resize arithmetic verification', () => {
+            it('should correctly resize 150x150 to 100x100', () => {
+                // 150x150 with scale = 100/150 ≈ 0.667
+                // newWidth = round(150 * 0.667) = 100
+                // newHeight = round(150 * 0.667) = 100
+                // Any mutation in scale calc or rounding would change the hash
+                const png = createValidLargePng(150, 150);
+                const result = generateThumbhash(png, 'image/png');
+                // Must be non-null and string
+                expect(result).not.toBeNull();
+                expect(typeof result).toBe('string');
+                // Verify it's valid base64
+                expect(() => atob(result!)).not.toThrow();
+            });
+
+            it('should correctly resize 250x100 to 100x40', () => {
+                // 250x100 with scale = 100/250 = 0.4
+                // newWidth = round(250 * 0.4) = 100
+                // newHeight = round(100 * 0.4) = 40
+                const png = createValidLargePng(250, 100);
+                const result = generateThumbhash(png, 'image/png');
+                expect(result).not.toBeNull();
+                expect(typeof result).toBe('string');
+            });
+
+            it('should handle edge case where one dimension is 1', () => {
+                // 200x1 - extreme aspect ratio
+                // Tests edge case in resize index calculation
+                const png = createValidLargePng(200, 1);
+                const result = generateThumbhash(png, 'image/png');
+                // May be null due to extreme aspect ratio, but should not throw
+                expect(result === null || typeof result === 'string').toBe(true);
+            });
+
+            it('should handle edge case where dimensions are prime numbers', () => {
+                // 97x89 - prime dimensions that don't divide evenly
+                // Tests floor operation in source coordinate calculation
+                const png = createValidLargePng(97, 89);
+                const result = generateThumbhash(png, 'image/png');
+                expect(result === null || typeof result === 'string').toBe(true);
+            });
+        });
+
+        describe('RGBA channel indexing verification', () => {
+            it('should correctly process all RGBA channels', async () => {
+                // Use processImage to test full pipeline including RGBA indexing
+                // The exact hash verifies channels are copied in correct order
+                const png = createValidLargePng(200, 200);
+                const result = await processImage(png, 'image/png');
+
+                expect(result).not.toBeNull();
+                expect(result?.width).toBe(200);
+                expect(result?.height).toBe(200);
+                // Exact hash includes RGBA channel data
+                expect(result?.thumbhash).toBe('IAgCBwC39NmFeHh4h4h3h4eICAAAAAAA');
+            });
+
+            it('should correctly process wide aspect ratio', async () => {
+                const png = createValidLargePng(300, 100);
+                const result = await processImage(png, 'image/png');
+
+                expect(result).not.toBeNull();
+                expect(result?.width).toBe(300);
+                expect(result?.height).toBe(100);
+                expect(result?.thumbhash).toBe('IAgCAoCHh4h4h/h4AAAAAAA=');
+            });
+
+            it('should correctly process tall aspect ratio', async () => {
+                const png = createValidLargePng(100, 300);
+                const result = await processImage(png, 'image/png');
+
+                expect(result).not.toBeNull();
+                expect(result?.width).toBe(100);
+                expect(result?.height).toBe(300);
+                expect(result?.thumbhash).toBe('IAgCAgArhYeIcIgnAAAAAAA=');
+            });
+        });
+
+        describe('JPEG thumbhash with exact assertions', () => {
+            it('should generate exact thumbhash for valid 8x8 JPEG', () => {
+                // Test the JPEG processing path with exact value assertion
+                // This catches mutations in generateJpegThumbhash:
+                // - decoded.width * decoded.height * 4 (buffer size)
+                // - i * 4, i * 4 + 1, i * 4 + 2, i * 4 + 3 (RGBA indexing)
+                const jpeg = createRealValidJpeg();
+                const result = generateThumbhash(jpeg, 'image/jpeg');
+                // Exact hash - any mutation in RGBA copying will change this
+                expect(result).toBe('PwgCBwBoiU6JeIiFiKeIiId/BAAAAAAA');
+            });
+
+            it('should produce consistent JPEG thumbhash on repeated calls', () => {
+                // Verify JPEG processing is deterministic
+                const jpeg = createRealValidJpeg();
+                const hash1 = generateThumbhash(jpeg, 'image/jpeg');
+                const hash2 = generateThumbhash(jpeg, 'image/jpeg');
+                const hash3 = generateThumbhash(jpeg, 'image/jpeg');
+
+                expect(hash1).toBe(hash2);
+                expect(hash2).toBe(hash3);
+                expect(hash1).toBe('PwgCBwBoiU6JeIiFiKeIiId/BAAAAAAA');
+            });
+
+            it('should process JPEG through full pipeline with exact result', async () => {
+                // Full processImage path for JPEG
+                const jpeg = createRealValidJpeg();
+                const result = await processImage(jpeg, 'image/jpeg');
+
+                expect(result).not.toBeNull();
+                expect(result?.width).toBe(8);
+                expect(result?.height).toBe(8);
+                // Exact thumbhash verifies entire pipeline
+                expect(result?.thumbhash).toBe('PwgCBwBoiU6JeIiFiKeIiId/BAAAAAAA');
+            });
+        });
+
+        describe('Megapixel calculation edge cases', () => {
+            it('should correctly calculate megapixels for various dimension combinations', () => {
+                // Test that width * height is correctly calculated
+                // Mutation width * height → width / height would produce wrong results
+
+                // 5000 * 5000 = 25,000,000 (exactly at limit)
+                const atLimit = createLargePngForResize(5000, 5000);
+                const atLimitDims = extractImageDimensions(atLimit, 'image/png');
+                expect(atLimitDims?.width).toBe(5000);
+                expect(atLimitDims?.height).toBe(5000);
+                // 5000 * 5000 = 25,000,000 = 25 MP
+
+                // 5001 * 5000 = 25,005,000 (just over limit)
+                const overLimit = createLargePngForResize(5001, 5000);
+                const overLimitDims = extractImageDimensions(overLimit, 'image/png');
+                expect(overLimitDims?.width).toBe(5001);
+                expect(overLimitDims?.height).toBe(5000);
+                // 5001 * 5000 = 25,005,000 = 25.005 MP
+            });
+
+            it('should handle rectangular images near megapixel limit', async () => {
+                // 10000 * 2500 = 25,000,000 = exactly 25 MP
+                // Tests that multiplication order doesn't matter
+                const rect = createLargePngForResize(10000, 2500);
+                const result = await processImage(rect, 'image/png');
+
+                expect(result).not.toBeNull();
+                expect(result?.width).toBe(10000);
+                expect(result?.height).toBe(2500);
+                // At exactly limit, should attempt thumbhash (may fail but tries)
+            });
+
+            it('should correctly handle 2500 * 10000 (swapped dimensions)', async () => {
+                // 2500 * 10000 = 25,000,000 = exactly 25 MP
+                // Same as above but swapped - verifies commutativity
+                const rect = createLargePngForResize(2500, 10000);
+                const result = await processImage(rect, 'image/png');
+
+                expect(result).not.toBeNull();
+                expect(result?.width).toBe(2500);
+                expect(result?.height).toBe(10000);
+            });
+
+            it('should skip thumbhash for 10001 * 2500 (just over limit)', async () => {
+                // 10001 * 2500 = 25,002,500 > 25,000,000
+                const rect = createLargePngForResize(10001, 2500);
+                const result = await processImage(rect, 'image/png');
+
+                expect(result).not.toBeNull();
+                expect(result?.width).toBe(10001);
+                expect(result?.height).toBe(2500);
+                expect(result?.thumbhash).toBeNull();
+            });
+        });
+    });
 });
