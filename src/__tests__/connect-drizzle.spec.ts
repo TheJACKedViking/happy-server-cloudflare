@@ -1036,6 +1036,539 @@ describe('Connect Routes with Drizzle Mocking', () => {
         });
     });
 
+    // =========================================================================
+    // StringLiteral Mutation Coverage Tests
+    // =========================================================================
+
+    describe('Exact Error Message Assertions', () => {
+        describe('GitHub OAuth Error Messages', () => {
+            it('should return exact "GitHub OAuth not configured" error', async () => {
+                const res = await authRequest('/v1/connect/github/params', { method: 'GET' });
+                expect(res.status).toBe(400);
+                const body = await res.json() as { error: string };
+                expect(body.error).toBe('GitHub OAuth not configured');
+            });
+
+            it('should return exact "GitHub account not connected" error on disconnect', async () => {
+                // Mock: account exists but has no githubUserId
+                drizzleMock.mockDb.query.accounts.findFirst = vi.fn().mockResolvedValue({
+                    id: TEST_USER_ID,
+                    githubUserId: null,
+                    seq: 0,
+                });
+
+                const res = await authRequest('/v1/connect/github', { method: 'DELETE' });
+                expect(res.status).toBe(404);
+                const body = await res.json() as { error: string };
+                expect(body.error).toBe('GitHub account not connected');
+            });
+        });
+
+        describe('Webhook Error Messages', () => {
+            const WEBHOOK_SECRET = 'test-webhook-secret-for-tests';
+
+            function webhookEnv() {
+                return createTestEnv({ GITHUB_WEBHOOK_SECRET: WEBHOOK_SECRET });
+            }
+
+            it('should return exact "Invalid signature" error for bad signature', async () => {
+                const res = await app.request('/v1/connect/github/webhook', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Hub-Signature-256': 'sha256=invalid-signature-here',
+                        'X-GitHub-Event': 'push',
+                    },
+                    body: JSON.stringify({ action: 'push' }),
+                }, webhookEnv());
+
+                expect(res.status).toBe(401);
+                const body = await res.json() as { error: string };
+                expect(body.error).toBe('Invalid signature');
+            });
+
+            it('should return exact "Webhook verification not configured" error when secret missing', async () => {
+                const res = await unauthRequest('/v1/connect/github/webhook', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Hub-Signature-256': 'sha256=test-signature',
+                        'X-GitHub-Event': 'push',
+                    },
+                    body: JSON.stringify({ action: 'push' }),
+                });
+
+                expect(res.status).toBe(500);
+                const body = await res.json() as { error: string };
+                expect(body.error).toBe('Webhook verification not configured');
+            });
+        });
+    });
+
+    describe('Exact Success Response Assertions', () => {
+        describe('GitHub Disconnect Success', () => {
+            it('should return { success: true } with exact boolean on disconnect', async () => {
+                const githubUserId = generateTestId('github');
+                drizzleMock.mockDb.query.accounts.findFirst = vi.fn().mockResolvedValue({
+                    id: TEST_USER_ID,
+                    githubUserId,
+                    seq: 5,
+                });
+                (drizzleMock.mockDb.update as ReturnType<typeof vi.fn>).mockReturnValue({
+                    set: vi.fn().mockReturnThis(),
+                    where: vi.fn().mockResolvedValue(undefined),
+                });
+                (drizzleMock.mockDb.delete as ReturnType<typeof vi.fn>).mockReturnValue({
+                    where: vi.fn().mockResolvedValue(undefined),
+                });
+
+                const body = await expectOk<{ success: boolean }>(
+                    await authRequest('/v1/connect/github', { method: 'DELETE' })
+                );
+
+                expect(body.success).toBe(true);
+                expect(typeof body.success).toBe('boolean');
+            });
+        });
+
+        describe('AI Token Registration Success', () => {
+            it('should return { success: true } for openai registration', async () => {
+                const body = await expectOk<{ success: boolean }>(
+                    await authRequest('/v1/connect/openai/register', {
+                        method: 'POST',
+                        body: JSON.stringify({ token: 'sk-test-openai-token' }),
+                    })
+                );
+                expect(body.success).toBe(true);
+            });
+
+            it('should return { success: true } for anthropic registration', async () => {
+                const body = await expectOk<{ success: boolean }>(
+                    await authRequest('/v1/connect/anthropic/register', {
+                        method: 'POST',
+                        body: JSON.stringify({ token: 'sk-ant-test-token' }),
+                    })
+                );
+                expect(body.success).toBe(true);
+            });
+
+            it('should return { success: true } for gemini registration', async () => {
+                const body = await expectOk<{ success: boolean }>(
+                    await authRequest('/v1/connect/gemini/register', {
+                        method: 'POST',
+                        body: JSON.stringify({ token: 'AIzaSy-test-token' }),
+                    })
+                );
+                expect(body.success).toBe(true);
+            });
+        });
+
+        describe('AI Token Deletion Success', () => {
+            it('should return { success: true } for deletion even when token exists', async () => {
+                const serviceToken = createTestServiceToken(TEST_USER_ID, {
+                    vendor: 'openai',
+                    token: Buffer.from('ENC:sk-to-delete'),
+                });
+                drizzleMock.seedData('serviceAccountTokens', [serviceToken]);
+
+                const body = await expectOk<{ success: true }>(
+                    await authRequest('/v1/connect/openai', { method: 'DELETE' })
+                );
+                expect(body.success).toBe(true);
+            });
+
+            it('should return { success: true } for deletion when token does not exist', async () => {
+                const body = await expectOk<{ success: true }>(
+                    await authRequest('/v1/connect/anthropic', { method: 'DELETE' })
+                );
+                expect(body.success).toBe(true);
+            });
+        });
+    });
+
+    describe('Exact OAuth URL Assertions', () => {
+        it('should return URL starting with exact GitHub authorize endpoint', async () => {
+            const envWithGithub = createTestEnv({
+                GITHUB_CLIENT_ID: 'test-client-id',
+                GITHUB_CLIENT_SECRET: 'test-client-secret',
+                GITHUB_REDIRECT_URL: 'https://app.example.com/callback',
+            });
+
+            const body = await expectOk<{ url: string }>(
+                await authRequest(
+                    '/v1/connect/github/params',
+                    { method: 'GET' },
+                    'valid-token',
+                    envWithGithub
+                )
+            );
+
+            expect(body.url).toMatch(/^https:\/\/github\.com\/login\/oauth\/authorize\?/);
+        });
+
+        it('should include exact scope values in URL', async () => {
+            const envWithGithub = createTestEnv({
+                GITHUB_CLIENT_ID: 'test-client-id',
+                GITHUB_REDIRECT_URL: 'https://app.example.com/callback',
+            });
+
+            const body = await expectOk<{ url: string }>(
+                await authRequest(
+                    '/v1/connect/github/params',
+                    { method: 'GET' },
+                    'valid-token',
+                    envWithGithub
+                )
+            );
+
+            const url = new URL(body.url);
+            const scope = url.searchParams.get('scope');
+            // Exact scope assertion to catch mutations
+            expect(scope).toBe('read:user,user:email,read:org,codespace');
+        });
+
+        it('should include exact state purpose in JWT payload', async () => {
+            const envWithGithub = createTestEnv({
+                GITHUB_CLIENT_ID: 'test-client-id',
+                GITHUB_REDIRECT_URL: 'https://app.example.com/callback',
+            });
+
+            const body = await expectOk<{ url: string }>(
+                await authRequest(
+                    '/v1/connect/github/params',
+                    { method: 'GET' },
+                    'valid-token',
+                    envWithGithub
+                )
+            );
+
+            const url = new URL(body.url);
+            const state = url.searchParams.get('state');
+            expect(state).toBeTruthy();
+            const parts = state!.split('.');
+            const payload = JSON.parse(Buffer.from(parts[1]!, 'base64url').toString()) as { purpose: string };
+            expect(payload.purpose).toBe('github-oauth-state');
+        });
+    });
+
+    describe('Exact Webhook Response Assertions', () => {
+        async function computeWebhookSignature(payload: string, secret: string): Promise<string> {
+            const encoder = new TextEncoder();
+            const key = await crypto.subtle.importKey(
+                'raw',
+                encoder.encode(secret),
+                { name: 'HMAC', hash: 'SHA-256' },
+                false,
+                ['sign']
+            );
+            const signatureBuffer = await crypto.subtle.sign('HMAC', key, encoder.encode(payload));
+            const signature = Array.from(new Uint8Array(signatureBuffer))
+                .map((b) => b.toString(16).padStart(2, '0'))
+                .join('');
+            return `sha256=${signature}`;
+        }
+
+        const WEBHOOK_SECRET = 'test-webhook-secret-for-tests';
+
+        function webhookEnv() {
+            return createTestEnv({ GITHUB_WEBHOOK_SECRET: WEBHOOK_SECRET });
+        }
+
+        it('should return exact "pong" message for ping event', async () => {
+            const payload = JSON.stringify({ zen: 'Test ping' });
+            const signature = await computeWebhookSignature(payload, WEBHOOK_SECRET);
+
+            const res = await app.request('/v1/connect/github/webhook', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Hub-Signature-256': signature,
+                    'X-GitHub-Event': 'ping',
+                },
+                body: payload,
+            }, webhookEnv());
+
+            expect(res.status).toBe(200);
+            const body = await res.json() as { received: boolean; event: string; processed: boolean; message: string };
+            expect(body.received).toBe(true);
+            expect(body.event).toBe('ping');
+            expect(body.processed).toBe(true);
+            expect(body.message).toBe('pong');
+        });
+
+        it('should return exact "push acknowledged" message for push event', async () => {
+            const payload = JSON.stringify({ ref: 'refs/heads/main' });
+            const signature = await computeWebhookSignature(payload, WEBHOOK_SECRET);
+
+            const res = await app.request('/v1/connect/github/webhook', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Hub-Signature-256': signature,
+                    'X-GitHub-Event': 'push',
+                },
+                body: payload,
+            }, webhookEnv());
+
+            expect(res.status).toBe(200);
+            const body = await res.json() as { message: string };
+            expect(body.message).toBe('push acknowledged');
+        });
+
+        it('should return exact "installation acknowledged" message', async () => {
+            const payload = JSON.stringify({ action: 'created' });
+            const signature = await computeWebhookSignature(payload, WEBHOOK_SECRET);
+
+            const res = await app.request('/v1/connect/github/webhook', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Hub-Signature-256': signature,
+                    'X-GitHub-Event': 'installation',
+                },
+                body: payload,
+            }, webhookEnv());
+
+            expect(res.status).toBe(200);
+            const body = await res.json() as { message: string };
+            expect(body.message).toBe('installation acknowledged');
+        });
+
+        it('should return exact "installation_repositories acknowledged" message', async () => {
+            const payload = JSON.stringify({ action: 'added' });
+            const signature = await computeWebhookSignature(payload, WEBHOOK_SECRET);
+
+            const res = await app.request('/v1/connect/github/webhook', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Hub-Signature-256': signature,
+                    'X-GitHub-Event': 'installation_repositories',
+                },
+                body: payload,
+            }, webhookEnv());
+
+            expect(res.status).toBe(200);
+            const body = await res.json() as { message: string };
+            expect(body.message).toBe('installation_repositories acknowledged');
+        });
+
+        it('should return exact "repository acknowledged" message', async () => {
+            const payload = JSON.stringify({ action: 'created' });
+            const signature = await computeWebhookSignature(payload, WEBHOOK_SECRET);
+
+            const res = await app.request('/v1/connect/github/webhook', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Hub-Signature-256': signature,
+                    'X-GitHub-Event': 'repository',
+                },
+                body: payload,
+            }, webhookEnv());
+
+            expect(res.status).toBe(200);
+            const body = await res.json() as { message: string };
+            expect(body.message).toBe('repository acknowledged');
+        });
+
+        it('should return exact "pull_request acknowledged" message', async () => {
+            const payload = JSON.stringify({ action: 'opened' });
+            const signature = await computeWebhookSignature(payload, WEBHOOK_SECRET);
+
+            const res = await app.request('/v1/connect/github/webhook', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Hub-Signature-256': signature,
+                    'X-GitHub-Event': 'pull_request',
+                },
+                body: payload,
+            }, webhookEnv());
+
+            expect(res.status).toBe(200);
+            const body = await res.json() as { message: string };
+            expect(body.message).toBe('pull_request acknowledged');
+        });
+
+        it('should return exact "issues acknowledged" message', async () => {
+            const payload = JSON.stringify({ action: 'opened' });
+            const signature = await computeWebhookSignature(payload, WEBHOOK_SECRET);
+
+            const res = await app.request('/v1/connect/github/webhook', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Hub-Signature-256': signature,
+                    'X-GitHub-Event': 'issues',
+                },
+                body: payload,
+            }, webhookEnv());
+
+            expect(res.status).toBe(200);
+            const body = await res.json() as { message: string };
+            expect(body.message).toBe('issues acknowledged');
+        });
+
+        it('should return exact "issue_comment acknowledged" message', async () => {
+            const payload = JSON.stringify({ action: 'created' });
+            const signature = await computeWebhookSignature(payload, WEBHOOK_SECRET);
+
+            const res = await app.request('/v1/connect/github/webhook', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Hub-Signature-256': signature,
+                    'X-GitHub-Event': 'issue_comment',
+                },
+                body: payload,
+            }, webhookEnv());
+
+            expect(res.status).toBe(200);
+            const body = await res.json() as { message: string };
+            expect(body.message).toBe('issue_comment acknowledged');
+        });
+
+        it('should return "event X not processed" for unknown events', async () => {
+            const payload = JSON.stringify({ action: 'test' });
+            const signature = await computeWebhookSignature(payload, WEBHOOK_SECRET);
+
+            const res = await app.request('/v1/connect/github/webhook', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Hub-Signature-256': signature,
+                    'X-GitHub-Event': 'custom_event',
+                },
+                body: payload,
+            }, webhookEnv());
+
+            expect(res.status).toBe(200);
+            const body = await res.json() as { event: string; processed: boolean; message: string };
+            expect(body.event).toBe('custom_event');
+            expect(body.processed).toBe(false);
+            expect(body.message).toBe('event custom_event not processed');
+        });
+
+        it('should return received: true as exact boolean', async () => {
+            const payload = JSON.stringify({ action: 'push' });
+            const signature = await computeWebhookSignature(payload, WEBHOOK_SECRET);
+
+            const res = await app.request('/v1/connect/github/webhook', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Hub-Signature-256': signature,
+                    'X-GitHub-Event': 'push',
+                },
+                body: payload,
+            }, webhookEnv());
+
+            expect(res.status).toBe(200);
+            const body = await res.json() as { received: boolean };
+            expect(body.received).toBe(true);
+            expect(typeof body.received).toBe('boolean');
+        });
+    });
+
+    describe('Exact Vendor Name Assertions', () => {
+        it('should return exact vendor string "openai" in token list', async () => {
+            const serviceToken = createTestServiceToken(TEST_USER_ID, {
+                vendor: 'openai',
+                token: Buffer.from('ENC:sk-openai-key'),
+            });
+            drizzleMock.seedData('serviceAccountTokens', [serviceToken]);
+
+            const body = await expectOk<{ tokens: Array<{ vendor: string; token: string }> }>(
+                await authRequest('/v1/connect/tokens', { method: 'GET' })
+            );
+
+            expect(body.tokens).toHaveLength(1);
+            expect(body.tokens[0]?.vendor).toBe('openai');
+        });
+
+        it('should return exact vendor string "anthropic" in token list', async () => {
+            const serviceToken = createTestServiceToken(TEST_USER_ID, {
+                vendor: 'anthropic',
+                token: Buffer.from('ENC:sk-anthropic-key'),
+            });
+            drizzleMock.seedData('serviceAccountTokens', [serviceToken]);
+
+            const body = await expectOk<{ tokens: Array<{ vendor: string; token: string }> }>(
+                await authRequest('/v1/connect/tokens', { method: 'GET' })
+            );
+
+            expect(body.tokens).toHaveLength(1);
+            expect(body.tokens[0]?.vendor).toBe('anthropic');
+        });
+
+        it('should return exact vendor string "gemini" in token list', async () => {
+            const serviceToken = createTestServiceToken(TEST_USER_ID, {
+                vendor: 'gemini',
+                token: Buffer.from('ENC:sk-gemini-key'),
+            });
+            drizzleMock.seedData('serviceAccountTokens', [serviceToken]);
+
+            const body = await expectOk<{ tokens: Array<{ vendor: string; token: string }> }>(
+                await authRequest('/v1/connect/tokens', { method: 'GET' })
+            );
+
+            expect(body.tokens).toHaveLength(1);
+            expect(body.tokens[0]?.vendor).toBe('gemini');
+        });
+
+        it('should return all three vendor strings correctly', async () => {
+            const tokens = [
+                createTestServiceToken(TEST_USER_ID, {
+                    vendor: 'openai',
+                    token: Buffer.from('ENC:sk-openai-key'),
+                }),
+                createTestServiceToken(TEST_USER_ID, {
+                    vendor: 'anthropic',
+                    token: Buffer.from('ENC:sk-anthropic-key'),
+                }),
+                createTestServiceToken(TEST_USER_ID, {
+                    vendor: 'gemini',
+                    token: Buffer.from('ENC:sk-gemini-key'),
+                }),
+            ];
+            drizzleMock.seedData('serviceAccountTokens', tokens);
+
+            const body = await expectOk<{ tokens: Array<{ vendor: string; token: string }> }>(
+                await authRequest('/v1/connect/tokens', { method: 'GET' })
+            );
+
+            expect(body.tokens).toHaveLength(3);
+            const vendors = body.tokens.map(t => t.vendor).sort();
+            expect(vendors).toEqual(['anthropic', 'gemini', 'openai']);
+        });
+    });
+
+    describe('AI Token Response Field Assertions', () => {
+        it('should return { token: null } with null value when not found', async () => {
+            const body = await expectOk<{ token: string | null }>(
+                await authRequest('/v1/connect/openai/token', { method: 'GET' })
+            );
+
+            expect(body.token).toBeNull();
+            expect(body).toHaveProperty('token', null);
+        });
+
+        it('should return exact decrypted token string', async () => {
+            const serviceToken = createTestServiceToken(TEST_USER_ID, {
+                vendor: 'openai',
+                token: Buffer.from('ENC:sk-exact-test-token-12345'),
+            });
+            drizzleMock.seedData('serviceAccountTokens', [serviceToken]);
+
+            const body = await expectOk<{ token: string | null }>(
+                await authRequest('/v1/connect/openai/token', { method: 'GET' })
+            );
+
+            expect(body.token).toBe('sk-exact-test-token-12345');
+        });
+    });
+
     describe('Encryption Initialization', () => {
         it('should initialize encryption when registering token', async () => {
             const { initEncryption, isEncryptionInitialized } = await import('@/lib/encryption');
