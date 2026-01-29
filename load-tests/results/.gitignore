@@ -1,0 +1,3 @@
+# Ignore actual test results (they may contain sensitive information)
+*.json
+!.gitkeep

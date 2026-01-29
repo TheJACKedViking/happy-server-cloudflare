@@ -41,13 +41,6 @@ export const DirectAuthRequestSchema = z
                 description: 'Base64-encoded Ed25519 signature of the challenge',
                 example: 'c2lnbmF0dXJlLWdvZXMtaGVyZQ==',
             }),
-        fingerprintRequestId: z
-            .string()
-            .optional()
-            .openapi({
-                description: 'Fingerprint.js requestId for device verification. When provided, the server validates the device intelligence before processing authentication.',
-                example: '1234567890.abcdef',
-            }),
     })
     .openapi('DirectAuthRequest');
 
@@ -93,13 +86,6 @@ export const TerminalAuthRequestSchema = z
             .openapi({
                 description: 'Whether the CLI supports V2 auth protocol',
                 example: true,
-            }),
-        fingerprintRequestId: z
-            .string()
-            .optional()
-            .openapi({
-                description: 'Fingerprint.js requestId for device verification',
-                example: '1234567890.abcdef',
             }),
     })
     .openapi('TerminalAuthRequest');
@@ -233,13 +219,6 @@ export const AccountAuthRequestSchema = z
             .openapi({
                 description: 'Base64-encoded X25519 public key',
                 example: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
-            }),
-        fingerprintRequestId: z
-            .string()
-            .optional()
-            .openapi({
-                description: 'Fingerprint.js requestId for device verification',
-                example: '1234567890.abcdef',
             }),
     })
     .openapi('AccountAuthRequest');

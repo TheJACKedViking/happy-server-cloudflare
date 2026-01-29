@@ -88,6 +88,13 @@ export interface ConnectionManagerEnv {
 
     /** Cloudflare version metadata for Sentry releases */
     CF_VERSION_METADATA?: { id: string };
+
+    /**
+     * Analytics Engine dataset for WebSocket metrics (HAP-896)
+     * Used to track connection times, broadcast latency, and errors
+     * @optional - metrics are silently dropped if not configured
+     */
+    WS_METRICS?: AnalyticsEngineDataset;
 }
 
 /**
@@ -232,6 +239,62 @@ class ConnectionManagerBase extends DurableObject<ConnectionManagerEnv> {
     }
 
     /**
+     * Write WebSocket metrics to Analytics Engine (HAP-896)
+     *
+     * Metrics are fire-and-forget for minimal latency impact.
+     * Silently skips if WS_METRICS binding is not configured.
+     *
+     * Data point structure:
+     * - blob1: metric type ('ws_connect' | 'ws_broadcast' | 'ws_disconnect' | 'ws_error')
+     * - blob2: userId
+     * - blob3: clientType ('user-scoped' | 'session-scoped' | 'machine-scoped')
+     * - blob4: additional context (error code, filter type, etc.)
+     * - double1: primary metric value (durationMs, latencyMs, etc.)
+     * - double2: secondary value (recipientCount, etc.)
+     * - index1: sessionId or machineId (for grouping)
+     *
+     * @param metricType - Type of metric being recorded
+     * @param durationMs - Primary time metric (connection time, latency, etc.)
+     * @param clientType - Type of client connection
+     * @param context - Additional context (error code, filter type)
+     * @param secondaryValue - Secondary metric value (recipient count, etc.)
+     * @param indexValue - Value for index1 (sessionId or machineId)
+     */
+    private writeWsMetric(
+        metricType: 'ws_connect' | 'ws_broadcast' | 'ws_disconnect' | 'ws_error' | 'ws_reconnect',
+        durationMs: number,
+        clientType: ClientType | '' = '',
+        context: string = '',
+        secondaryValue: number = 0,
+        indexValue: string = ''
+    ): void {
+        if (!this.env.WS_METRICS) {
+            return; // Analytics Engine not configured
+        }
+
+        try {
+            this.env.WS_METRICS.writeDataPoint({
+                blobs: [
+                    metricType,              // blob1: metric type
+                    this.userId ?? '',       // blob2: user ID
+                    clientType,              // blob3: client type
+                    context,                 // blob4: context (error code, filter type)
+                ],
+                doubles: [
+                    durationMs,              // double1: duration/latency in ms
+                    secondaryValue,          // double2: secondary value (recipient count, etc.)
+                ],
+                indexes: [
+                    indexValue,              // index1: session/machine ID for grouping
+                ],
+            });
+        } catch (error) {
+            // Fire-and-forget - log but don't throw
+            console.warn('[WS Metrics] Failed to write metric:', error);
+        }
+    }
+
+    /**
      * Handle incoming HTTP requests to the Durable Object
      *
      * Supports:
@@ -310,6 +373,9 @@ class ConnectionManagerBase extends DurableObject<ConnectionManagerEnv> {
             // The route handler validates tickets and sets this header
             const preValidatedUserId = request.headers.get('X-Validated-User-Id');
 
+            // HAP-896: Track connection start time for metrics
+            const connectionStartTime = Date.now();
+
             // HAP-375: Determine auth strategy based on authentication method
             // - Pre-validated userId: Route handler already validated (ticket flow)
             // - Token present: Validate immediately (legacy flow for happy-cli)
@@ -362,6 +428,17 @@ class ConnectionManagerBase extends DurableObject<ConnectionManagerEnv> {
                 if (!this.userId) {
                     this.userId = preValidatedUserId;
                 }
+
+                // HAP-896: Write connection metric
+                const connectionTimeMs = Date.now() - connectionStartTime;
+                this.writeWsMetric(
+                    'ws_connect',
+                    connectionTimeMs,
+                    clientType,
+                    'ticket-auth', // auth method used
+                    0,
+                    sessionId ?? machineId ?? ''
+                );
 
                 // Send connected confirmation in client format
                 const connectedMsg: ClientMessage = {
@@ -476,6 +553,17 @@ class ConnectionManagerBase extends DurableObject<ConnectionManagerEnv> {
                 if (!this.userId) {
                     this.userId = verified.userId;
                 }
+
+                // HAP-896: Write connection metric for legacy auth
+                const legacyConnectionTimeMs = Date.now() - connectionStartTime;
+                this.writeWsMetric(
+                    'ws_connect',
+                    legacyConnectionTimeMs,
+                    handshake.clientType,
+                    'header-auth', // auth method used
+                    0,
+                    handshake.sessionId ?? handshake.machineId ?? ''
+                );
 
                 // Send connected confirmation in client format
                 const connectedMsg: ClientMessage = {
@@ -1204,6 +1292,17 @@ class ConnectionManagerBase extends DurableObject<ConnectionManagerEnv> {
         }
 
         if (metadata) {
+            // HAP-896: Write disconnect metric
+            const sessionDurationMs = Date.now() - metadata.connectedAt;
+            this.writeWsMetric(
+                'ws_disconnect',
+                sessionDurationMs,
+                metadata.clientType,
+                wasClean ? 'clean' : `error:${code}`, // context: clean or error code
+                0,
+                metadata.sessionId ?? metadata.machineId ?? ''
+            );
+
             // Log disconnection
             if (this.env.ENVIRONMENT !== 'production') {
                 console.log(
@@ -1495,16 +1594,31 @@ class ConnectionManagerBase extends DurableObject<ConnectionManagerEnv> {
      * @returns Number of connections the message was delivered to
      */
     private broadcast(message: WebSocketMessage, filter?: MessageFilter): number {
+        const broadcastStartTime = Date.now();
         const messageStr = JSON.stringify(message);
 
         // HAP-456: Use tag-based O(1) lookups for simple filter types
         const tag = this.getTagForFilter(filter);
+        let delivered: number;
         if (tag) {
-            return this.sendToTag(tag, messageStr);
+            delivered = this.sendToTag(tag, messageStr);
+        } else {
+            // Fall back to O(n) iteration for complex hybrid filters
+            delivered = this.broadcastWithIteration(messageStr, filter);
         }
 
-        // Fall back to O(n) iteration for complex hybrid filters
-        return this.broadcastWithIteration(messageStr, filter);
+        // HAP-896: Write broadcast metric
+        const broadcastLatencyMs = Date.now() - broadcastStartTime;
+        const filterType = filter?.type ?? 'all';
+        this.writeWsMetric(
+            'ws_broadcast',
+            broadcastLatencyMs,
+            '',
+            filterType,
+            delivered // recipient count
+        );
+
+        return delivered;
     }
 
     /**
@@ -2243,6 +2357,18 @@ class ConnectionManagerBase extends DurableObject<ConnectionManagerEnv> {
                 { type: 'user-scoped-only' }
             );
         }
+
+        // HAP-896: Write connection metric for message-auth
+        // Connection time is from when socket was accepted to auth completion
+        const messageAuthTimeMs = Date.now() - metadata.connectedAt;
+        this.writeWsMetric(
+            'ws_connect',
+            messageAuthTimeMs,
+            clientType,
+            'message-auth', // auth method used
+            0,
+            payload.sessionId ?? payload.machineId ?? ''
+        );
 
         if (this.env.ENVIRONMENT !== 'production') {
             console.log(

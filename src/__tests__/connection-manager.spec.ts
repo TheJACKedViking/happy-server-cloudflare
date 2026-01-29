@@ -1348,7 +1348,7 @@ describe('ConnectionManager Durable Object', () => {
             expect(ws.close).toHaveBeenCalled();
         });
 
-        it('should broadcast machine-update when machine-scoped disconnects', async () => {
+        it('should broadcast ephemeral machine-status when machine-scoped disconnects', async () => {
             const machineWs = createMockWebSocket('machine-ws');
             const machineMetadata: ConnectionMetadata = {
                 connectionId: 'machine-conn',
@@ -1379,12 +1379,16 @@ describe('ConnectionManager Durable Object', () => {
 
             await cm.webSocketClose(machineWs, 1000, 'Disconnect', true);
 
-            // User should receive machine-update with active: false
+            // User should receive ephemeral machine-status event with online: false
+            // Implementation sends both machine-status and machine-activity events
             expect(userWs.send).toHaveBeenCalled();
-            const sentMessage = JSON.parse((userWs.send as ReturnType<typeof vi.fn>).mock.calls[0]![0]);
-            expect(sentMessage.event).toBe('machine-update');
-            expect(sentMessage.data.machineId).toBe('machine-1');
-            expect(sentMessage.data.active).toBe(false);
+            const calls = (userWs.send as ReturnType<typeof vi.fn>).mock.calls;
+            // First call is machine-status, second is machine-activity
+            const statusMessage = JSON.parse(calls[0]![0] as string);
+            expect(statusMessage.event).toBe('ephemeral');
+            expect(statusMessage.data.type).toBe('machine-status');
+            expect(statusMessage.data.machineId).toBe('machine-1');
+            expect(statusMessage.data.online).toBe(false);
         });
 
         it('should handle close of unknown connection gracefully', async () => {
@@ -1424,7 +1428,7 @@ describe('ConnectionManager Durable Object', () => {
     // =========================================================================
 
     describe('WebSocket Error Handling', () => {
-        it('should clean up connection on error', async () => {
+        it('should clean up connection on error and re-throw for Sentry', async () => {
             const ws = createMockWebSocket('ws-1');
             const metadata: ConnectionMetadata = {
                 connectionId: 'conn-1',
@@ -1440,22 +1444,25 @@ describe('ConnectionManager Durable Object', () => {
             const ctxWithWs = createMockDurableObjectState([ws]);
             const cm = new ConnectionManagerBase(ctxWithWs, env);
 
-            await cm.webSocketError(ws, new Error('Test error'));
+            // webSocketError re-throws the error for Sentry instrumentation to capture
+            await expect(cm.webSocketError(ws, new Error('Test error'))).rejects.toThrow('Test error');
 
+            // But it should still close the WebSocket before re-throwing
             expect(ws.close).toHaveBeenCalled();
         });
 
-        it('should log error for unknown connection', async () => {
+        it('should log error for unknown connection and re-throw', async () => {
             const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
             const unknownWs = createMockWebSocket('unknown-ws');
 
-            await connectionManager.webSocketError(unknownWs, new Error('Test error'));
+            // webSocketError re-throws the error for Sentry instrumentation to capture
+            await expect(connectionManager.webSocketError(unknownWs, new Error('Test error'))).rejects.toThrow('Test error');
 
             expect(consoleSpy).toHaveBeenCalled();
             consoleSpy.mockRestore();
         });
 
-        it('should handle error when WebSocket is already closed', async () => {
+        it('should handle error when WebSocket is already closed and still re-throw', async () => {
             const ws = createMockWebSocket('ws-1');
             ws.close = vi.fn(() => {
                 throw new Error('Already closed');
@@ -1464,8 +1471,9 @@ describe('ConnectionManager Durable Object', () => {
             const ctxWithWs = createMockDurableObjectState([ws]);
             const cm = new ConnectionManagerBase(ctxWithWs, env);
 
-            // Should not throw
-            await cm.webSocketError(ws, new Error('Test error'));
+            // Even when ws.close throws, webSocketError should still re-throw the original error
+            // for Sentry instrumentation to capture
+            await expect(cm.webSocketError(ws, new Error('Test error'))).rejects.toThrow('Test error');
         });
     });
 
@@ -1722,7 +1730,7 @@ describe('ConnectionManager Durable Object', () => {
     // =========================================================================
 
     describe('Machine Online Status Broadcast', () => {
-        it('should broadcast machine-update when machine connects', async () => {
+        it('should broadcast ephemeral machine-status when machine connects', async () => {
             // Set up a user-scoped connection first
             const userWs = createMockWebSocket('user-ws');
             const userMetadata: ConnectionMetadata = {
@@ -1755,16 +1763,20 @@ describe('ConnectionManager Durable Object', () => {
             try {
                 await cm.fetch(request);
             } catch (e) {
-                // RangeError is expected in Node.js for status 101
-                expect((e as Error).message).toContain('status');
+                // Error expected in Node.js for status 101 (either RangeError or TypeError)
+                expect(e).toBeInstanceOf(Error);
             }
 
-            // User should receive machine-update with active: true
+            // User should receive ephemeral machine-status event with online: true
+            // Implementation sends both machine-status and machine-activity events
             expect(userWs.send).toHaveBeenCalled();
-            const sentMessage = JSON.parse((userWs.send as ReturnType<typeof vi.fn>).mock.calls[0]![0]);
-            expect(sentMessage.event).toBe('machine-update');
-            expect(sentMessage.data.machineId).toBe('new-machine');
-            expect(sentMessage.data.active).toBe(true);
+            const calls = (userWs.send as ReturnType<typeof vi.fn>).mock.calls;
+            // First call is machine-status, second is machine-activity
+            const statusMessage = JSON.parse(calls[0]![0] as string);
+            expect(statusMessage.event).toBe('ephemeral');
+            expect(statusMessage.data.type).toBe('machine-status');
+            expect(statusMessage.data.machineId).toBe('new-machine');
+            expect(statusMessage.data.online).toBe(true);
         });
     });
 

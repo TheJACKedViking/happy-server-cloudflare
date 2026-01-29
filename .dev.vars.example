@@ -69,12 +69,3 @@ TEST_AUTH_SECRET=test-secret-for-local-development-only
 # Get from: https://resend.com/api-keys
 # Used for sending session share invitation emails
 # RESEND_API_KEY=
-
-# ============================================================
-# FINGERPRINT.JS PRO
-# ============================================================
-
-# Fingerprint.js Pro Server API key for device intelligence
-# Get from: https://dashboard.fingerprint.com
-# Used for bot detection and device fingerprinting
-# FINGERPRINT_API_KEY=

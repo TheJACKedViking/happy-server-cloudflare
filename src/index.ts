@@ -118,6 +118,13 @@ interface Env {
     CLIENT_METRICS?: AnalyticsEngineDataset;
 
     /**
+     * Analytics Engine dataset for WebSocket metrics (HAP-896)
+     * Used to track connection times, broadcast latency, and errors
+     * @optional - metrics are silently dropped if not configured
+     */
+    WS_METRICS?: AnalyticsEngineDataset;
+
+    /**
      * API key for CI metrics ingestion (HAP-564)
      * Used to authenticate CI/CD systems sending bundle metrics
      * @optional - if not set, CI metrics endpoint is disabled
@@ -135,13 +142,6 @@ interface Env {
      * Automatically populated by Cloudflare Workers
      */
     CF_VERSION_METADATA?: { id: string };
-
-    /**
-     * Fingerprint.js Pro Server API key for device intelligence
-     * @optional Used for bot detection and device fingerprinting
-     * @see https://dev.fingerprint.com/docs/get-server-side-intelligence
-     */
-    FINGERPRINT_API_KEY?: string;
 
     /**
      * Resend API key for sending transactional emails (HAP-805)

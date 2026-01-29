@@ -12,11 +12,9 @@
  *
  * Key areas tested:
  * 1. shouldFailClosedForRateLimiting() function
- * 2. verifyFingerprint() function - all branches
- * 3. Rate limiting responses (429, 503)
- * 4. Bot detection responses (403)
- * 5. Response object property mutations
- * 6. Token creation with session extras
+ * 2. Rate limiting responses (429, 503)
+ * 3. Response object property mutations
+ * 4. Token creation with session extras
  *
  * @module __tests__/auth-mutations.spec
  * @see HAP-914 for mutation testing improvement requirement
@@ -40,22 +38,12 @@ let drizzleMock: ReturnType<typeof createMockDrizzle>;
 // Store mock functions for verification - using vi.hoisted for proper hoisting
 const {
     mockCheckRateLimit,
-    mockIsFingerprintInitialized,
-    mockInitFingerprint,
-    mockCheckForBot,
 } = vi.hoisted(() => ({
     mockCheckRateLimit: vi.fn().mockResolvedValue({
         allowed: true,
         retryAfter: 0,
         limit: 5,
         remaining: 4,
-    }),
-    mockIsFingerprintInitialized: vi.fn().mockReturnValue(false),
-    mockInitFingerprint: vi.fn(),
-    mockCheckForBot: vi.fn().mockResolvedValue({
-        isBot: false,
-        botKind: null,
-        error: null,
     }),
 }));
 
@@ -94,13 +82,6 @@ vi.mock('@/db/client', () => ({
 // Mock rate limiting module
 vi.mock('@/lib/rate-limit', () => ({
     checkRateLimit: mockCheckRateLimit,
-}));
-
-// Mock fingerprint module
-vi.mock('@/lib/fingerprint', () => ({
-    isFingerprintInitialized: mockIsFingerprintInitialized,
-    initFingerprint: mockInitFingerprint,
-    checkForBot: mockCheckForBot,
 }));
 
 // Import app AFTER mocks are set up
@@ -147,7 +128,6 @@ function signChallenge(challenge: string, secretKey: Uint8Array): string {
 function createTestEnv(overrides: Partial<{
     ENVIRONMENT: 'development' | 'staging' | 'production';
     RATE_LIMIT_KV: KVNamespace | undefined;
-    FINGERPRINT_API_KEY: string | undefined;
 }> = {}) {
     return {
         ENVIRONMENT: overrides.ENVIRONMENT ?? ('development' as const),
@@ -156,7 +136,6 @@ function createTestEnv(overrides: Partial<{
         UPLOADS: createMockR2(),
         CONNECTION_MANAGER: createMockDurableObjectNamespace(),
         RATE_LIMIT_KV: overrides.RATE_LIMIT_KV,
-        FINGERPRINT_API_KEY: overrides.FINGERPRINT_API_KEY,
     };
 }
 
@@ -176,15 +155,6 @@ describe('Auth Routes - Mutation Testing (HAP-914)', () => {
             retryAfter: 0,
             limit: 5,
             remaining: 4,
-        });
-
-        // Reset fingerprint mocks
-        mockIsFingerprintInitialized.mockReturnValue(false);
-        mockInitFingerprint.mockClear();
-        mockCheckForBot.mockResolvedValue({
-            isBot: false,
-            botKind: null,
-            error: null,
         });
     });
 
@@ -510,349 +480,6 @@ describe('Auth Routes - Mutation Testing (HAP-914)', () => {
                 keyPair.publicKey,
                 expect.any(Object)
             );
-        });
-    });
-
-    // =========================================================================
-    // verifyFingerprint() Function Tests (HAP-788)
-    // =========================================================================
-
-    describe('verifyFingerprint() - all branches', () => {
-        it('should allow request when no fingerprintRequestId is provided', async () => {
-            const keyPair = generateEd25519KeyPair();
-            const challenge = base64.encode(new TextEncoder().encode('test'));
-            const signature = signChallenge(challenge, keyPair.secretKey);
-
-            const body = await expectOk<{ success: boolean; token: string }>(
-                await unauthRequest('/v1/auth', {
-                    method: 'POST',
-                    body: JSON.stringify({
-                        publicKey: keyPair.publicKey,
-                        challenge,
-                        signature,
-                        // No fingerprintRequestId
-                    }),
-                })
-            );
-
-            expect(body.success).toBe(true);
-            // checkForBot should NOT have been called
-            expect(mockCheckForBot).not.toHaveBeenCalled();
-        });
-
-        it('should allow request when FINGERPRINT_API_KEY is not configured', async () => {
-            const envWithoutFingerprint = createTestEnv({
-                FINGERPRINT_API_KEY: undefined,
-            });
-
-            const keyPair = generateEd25519KeyPair();
-            const challenge = base64.encode(new TextEncoder().encode('test'));
-            const signature = signChallenge(challenge, keyPair.secretKey);
-
-            const body = await expectOk<{ success: boolean; token: string }>(
-                await unauthRequest('/v1/auth', {
-                    method: 'POST',
-                    body: JSON.stringify({
-                        publicKey: keyPair.publicKey,
-                        challenge,
-                        signature,
-                        fingerprintRequestId: 'test-request-id',
-                    }),
-                }, envWithoutFingerprint)
-            );
-
-            expect(body.success).toBe(true);
-            // checkForBot should NOT have been called (no API key)
-            expect(mockCheckForBot).not.toHaveBeenCalled();
-        });
-
-        it('should initialize fingerprint and check for bot when API key is configured', async () => {
-            const envWithFingerprint = createTestEnv({
-                FINGERPRINT_API_KEY: 'test-fingerprint-api-key',
-            });
-
-            mockIsFingerprintInitialized.mockReturnValue(false);
-
-            const keyPair = generateEd25519KeyPair();
-            const challenge = base64.encode(new TextEncoder().encode('test'));
-            const signature = signChallenge(challenge, keyPair.secretKey);
-
-            const body = await expectOk<{ success: boolean; token: string }>(
-                await unauthRequest('/v1/auth', {
-                    method: 'POST',
-                    body: JSON.stringify({
-                        publicKey: keyPair.publicKey,
-                        challenge,
-                        signature,
-                        fingerprintRequestId: 'test-request-id',
-                    }),
-                }, envWithFingerprint)
-            );
-
-            expect(body.success).toBe(true);
-            expect(mockInitFingerprint).toHaveBeenCalledWith('test-fingerprint-api-key');
-            expect(mockCheckForBot).toHaveBeenCalledWith('test-request-id');
-        });
-
-        it('should NOT re-initialize fingerprint if already initialized', async () => {
-            const envWithFingerprint = createTestEnv({
-                FINGERPRINT_API_KEY: 'test-fingerprint-api-key',
-            });
-
-            mockIsFingerprintInitialized.mockReturnValue(true); // Already initialized
-
-            const keyPair = generateEd25519KeyPair();
-            const challenge = base64.encode(new TextEncoder().encode('test'));
-            const signature = signChallenge(challenge, keyPair.secretKey);
-
-            await unauthRequest('/v1/auth', {
-                method: 'POST',
-                body: JSON.stringify({
-                    publicKey: keyPair.publicKey,
-                    challenge,
-                    signature,
-                    fingerprintRequestId: 'test-request-id',
-                }),
-            }, envWithFingerprint);
-
-            // Should NOT have called initFingerprint since already initialized
-            expect(mockInitFingerprint).not.toHaveBeenCalled();
-            expect(mockCheckForBot).toHaveBeenCalledWith('test-request-id');
-        });
-
-        it('should return 403 when bot is detected', async () => {
-            const envWithFingerprint = createTestEnv({
-                FINGERPRINT_API_KEY: 'test-fingerprint-api-key',
-            });
-
-            mockCheckForBot.mockResolvedValueOnce({
-                isBot: true,
-                botKind: 'automation_tool',
-                error: null,
-            });
-
-            const keyPair = generateEd25519KeyPair();
-            const challenge = base64.encode(new TextEncoder().encode('test'));
-            const signature = signChallenge(challenge, keyPair.secretKey);
-
-            const res = await unauthRequest('/v1/auth', {
-                method: 'POST',
-                body: JSON.stringify({
-                    publicKey: keyPair.publicKey,
-                    challenge,
-                    signature,
-                    fingerprintRequestId: 'test-request-id',
-                }),
-            }, envWithFingerprint);
-
-            expect(res.status).toBe(403);
-            const body = await res.json() as { error: string; reason: string };
-            expect(body.error).toBe('Bot detected');
-            expect(body.reason).toBe('Bot detected: automation_tool');
-        });
-
-        it('should include "unknown" in reason when botKind is null', async () => {
-            const envWithFingerprint = createTestEnv({
-                FINGERPRINT_API_KEY: 'test-fingerprint-api-key',
-            });
-
-            mockCheckForBot.mockResolvedValueOnce({
-                isBot: true,
-                botKind: null, // Unknown bot type
-                error: null,
-            });
-
-            const keyPair = generateEd25519KeyPair();
-            const challenge = base64.encode(new TextEncoder().encode('test'));
-            const signature = signChallenge(challenge, keyPair.secretKey);
-
-            const res = await unauthRequest('/v1/auth', {
-                method: 'POST',
-                body: JSON.stringify({
-                    publicKey: keyPair.publicKey,
-                    challenge,
-                    signature,
-                    fingerprintRequestId: 'test-request-id',
-                }),
-            }, envWithFingerprint);
-
-            expect(res.status).toBe(403);
-            const body = await res.json() as { error: string; reason: string };
-            expect(body.error).toBe('Bot detected');
-            expect(body.reason).toBe('Bot detected: unknown');
-        });
-
-        it('should allow request when botCheck returns error (fail-open)', async () => {
-            const envWithFingerprint = createTestEnv({
-                FINGERPRINT_API_KEY: 'test-fingerprint-api-key',
-            });
-
-            mockCheckForBot.mockResolvedValueOnce({
-                isBot: false,
-                botKind: null,
-                error: 'API rate limit exceeded',
-            });
-
-            const keyPair = generateEd25519KeyPair();
-            const challenge = base64.encode(new TextEncoder().encode('test'));
-            const signature = signChallenge(challenge, keyPair.secretKey);
-
-            const body = await expectOk<{ success: boolean; token: string }>(
-                await unauthRequest('/v1/auth', {
-                    method: 'POST',
-                    body: JSON.stringify({
-                        publicKey: keyPair.publicKey,
-                        challenge,
-                        signature,
-                        fingerprintRequestId: 'test-request-id',
-                    }),
-                }, envWithFingerprint)
-            );
-
-            // Should succeed despite botCheck error (fail-open for availability)
-            expect(body.success).toBe(true);
-        });
-
-        it('should allow request when checkForBot throws exception (fail-open)', async () => {
-            const envWithFingerprint = createTestEnv({
-                FINGERPRINT_API_KEY: 'test-fingerprint-api-key',
-            });
-
-            mockCheckForBot.mockRejectedValueOnce(new Error('Network timeout'));
-
-            const keyPair = generateEd25519KeyPair();
-            const challenge = base64.encode(new TextEncoder().encode('test'));
-            const signature = signChallenge(challenge, keyPair.secretKey);
-
-            const body = await expectOk<{ success: boolean; token: string }>(
-                await unauthRequest('/v1/auth', {
-                    method: 'POST',
-                    body: JSON.stringify({
-                        publicKey: keyPair.publicKey,
-                        challenge,
-                        signature,
-                        fingerprintRequestId: 'test-request-id',
-                    }),
-                }, envWithFingerprint)
-            );
-
-            // Should succeed despite exception (fail-open for availability)
-            expect(body.success).toBe(true);
-        });
-
-        it('should allow request when checkForBot throws non-Error exception', async () => {
-            const envWithFingerprint = createTestEnv({
-                FINGERPRINT_API_KEY: 'test-fingerprint-api-key',
-            });
-
-            mockCheckForBot.mockRejectedValueOnce('Unknown error string');
-
-            const keyPair = generateEd25519KeyPair();
-            const challenge = base64.encode(new TextEncoder().encode('test'));
-            const signature = signChallenge(challenge, keyPair.secretKey);
-
-            const body = await expectOk<{ success: boolean; token: string }>(
-                await unauthRequest('/v1/auth', {
-                    method: 'POST',
-                    body: JSON.stringify({
-                        publicKey: keyPair.publicKey,
-                        challenge,
-                        signature,
-                        fingerprintRequestId: 'test-request-id',
-                    }),
-                }, envWithFingerprint)
-            );
-
-            // Should succeed despite exception (fail-open for availability)
-            expect(body.success).toBe(true);
-        });
-
-        it('should return 403 for bot on terminal auth request', async () => {
-            const envWithFingerprint = createTestEnv({
-                FINGERPRINT_API_KEY: 'test-fingerprint-api-key',
-            });
-
-            mockCheckForBot.mockResolvedValueOnce({
-                isBot: true,
-                botKind: 'search_engine',
-                error: null,
-            });
-
-            const keyPair = generateX25519KeyPair();
-
-            const res = await unauthRequest('/v1/auth/request', {
-                method: 'POST',
-                body: JSON.stringify({
-                    publicKey: keyPair.publicKey,
-                    fingerprintRequestId: 'test-request-id',
-                }),
-            }, envWithFingerprint);
-
-            expect(res.status).toBe(403);
-            const body = await res.json() as { error: string; reason: string };
-            expect(body.error).toBe('Bot detected');
-            expect(body.reason).toBe('Bot detected: search_engine');
-        });
-
-        it('should return 403 for bot on account auth request', async () => {
-            const envWithFingerprint = createTestEnv({
-                FINGERPRINT_API_KEY: 'test-fingerprint-api-key',
-            });
-
-            mockCheckForBot.mockResolvedValueOnce({
-                isBot: true,
-                botKind: 'headless_browser',
-                error: null,
-            });
-
-            const keyPair = generateX25519KeyPair();
-
-            const res = await unauthRequest('/v1/auth/account/request', {
-                method: 'POST',
-                body: JSON.stringify({
-                    publicKey: keyPair.publicKey,
-                    fingerprintRequestId: 'test-request-id',
-                }),
-            }, envWithFingerprint);
-
-            expect(res.status).toBe(403);
-            const body = await res.json() as { error: string; reason: string };
-            expect(body.error).toBe('Bot detected');
-            expect(body.reason).toBe('Bot detected: headless_browser');
-        });
-
-        it('should use fallback reason when fingerprintResult.reason is undefined', async () => {
-            const envWithFingerprint = createTestEnv({
-                FINGERPRINT_API_KEY: 'test-fingerprint-api-key',
-            });
-
-            // This simulates a case where isBot is true but reason would be undefined
-            // The code uses ?? 'Suspicious activity detected' fallback
-            mockCheckForBot.mockResolvedValueOnce({
-                isBot: true,
-                botKind: undefined, // No bot kind
-                error: null,
-            });
-
-            const keyPair = generateEd25519KeyPair();
-            const challenge = base64.encode(new TextEncoder().encode('test'));
-            const signature = signChallenge(challenge, keyPair.secretKey);
-
-            const res = await unauthRequest('/v1/auth', {
-                method: 'POST',
-                body: JSON.stringify({
-                    publicKey: keyPair.publicKey,
-                    challenge,
-                    signature,
-                    fingerprintRequestId: 'test-request-id',
-                }),
-            }, envWithFingerprint);
-
-            expect(res.status).toBe(403);
-            const body = await res.json() as { error: string; reason: string };
-            expect(body.error).toBe('Bot detected');
-            // Should use the fallback "unknown" for undefined botKind
-            expect(body.reason).toBe('Bot detected: unknown');
         });
     });
 
@@ -1299,36 +926,6 @@ describe('Auth Routes - Mutation Testing (HAP-914)', () => {
             const body = await res.json() as { error: string; code: string };
             expect(body.error).toBe('Service temporarily unavailable');
             expect(body.code).toBe('RATE_LIMIT_UNAVAILABLE');
-        });
-
-        it('should return exactly "Bot detected" for fingerprint failure', async () => {
-            const envWithFingerprint = createTestEnv({
-                FINGERPRINT_API_KEY: 'test-key',
-            });
-
-            mockCheckForBot.mockResolvedValueOnce({
-                isBot: true,
-                botKind: 'automated',
-                error: null,
-            });
-
-            const keyPair = generateEd25519KeyPair();
-            const challenge = base64.encode(new TextEncoder().encode('test'));
-            const signature = signChallenge(challenge, keyPair.secretKey);
-
-            const res = await unauthRequest('/v1/auth', {
-                method: 'POST',
-                body: JSON.stringify({
-                    publicKey: keyPair.publicKey,
-                    challenge,
-                    signature,
-                    fingerprintRequestId: 'test',
-                }),
-            }, envWithFingerprint);
-
-            expect(res.status).toBe(403);
-            const body = await res.json() as { error: string };
-            expect(body.error).toBe('Bot detected');
         });
 
         it('should return exactly "Failed to create account" when insert fails', async () => {

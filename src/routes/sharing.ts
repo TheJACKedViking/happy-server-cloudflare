@@ -6,6 +6,7 @@ import { schema } from '@/db/schema';
 import { createId } from '@/utils/id';
 import { eq, and, sql } from 'drizzle-orm';
 import { checkRateLimit, type RateLimitConfig } from '@/lib/rate-limit';
+import { sendInvitationEmail } from '@/lib/email';
 import {
     SessionIdParamSchema,
     ShareIdParamSchema,
@@ -259,6 +260,41 @@ async function getUserEmail(
     }
 
     return null;
+}
+
+/**
+ * Get the display name for a user (for email personalization)
+ * Returns firstName + lastName if available, otherwise username, otherwise 'Someone'
+ *
+ * HAP-866: Used for invitation email personalization
+ */
+async function getInviterDisplayName(
+    db: ReturnType<typeof getDb>,
+    userId: string
+): Promise<string> {
+    const account = await db.query.accounts.findFirst({
+        where: (accounts, { eq }) => eq(accounts.id, userId),
+    });
+
+    if (!account) {
+        return 'Someone';
+    }
+
+    // Build display name from firstName + lastName if available
+    const nameParts: string[] = [];
+    if (account.firstName) nameParts.push(account.firstName);
+    if (account.lastName) nameParts.push(account.lastName);
+
+    if (nameParts.length > 0) {
+        return nameParts.join(' ');
+    }
+
+    // Fall back to username if available
+    if (account.username) {
+        return account.username;
+    }
+
+    return 'Someone';
 }
 
 /**
@@ -631,7 +667,37 @@ sharingRoutes.openapi(addShareRoute, async (c) => {
 
         await db.insert(schema.sessionShareInvitations).values(invitation);
 
-        // TODO: Send email (out of scope for HAP-772)
+        // Send invitation email (HAP-866)
+        const inviterName = await getInviterDisplayName(db, userId);
+        const emailResult = await sendInvitationEmail(
+            {
+                RESEND_API_KEY: c.env.RESEND_API_KEY,
+                HAPPY_APP_URL: c.env.HAPPY_APP_URL,
+                ENVIRONMENT: c.env.ENVIRONMENT,
+            },
+            {
+                recipientEmail: normalizedEmail,
+                invitationToken: invitation.token,
+                inviterName,
+                permission: invitation.permission,
+                expiresAt: invitation.expiresAt,
+            }
+        );
+
+        // If email fails, delete the invitation and return error
+        if (!emailResult.success) {
+            await db
+                .delete(schema.sessionShareInvitations)
+                .where(eq(schema.sessionShareInvitations.id, invitation.id));
+
+            return c.json(
+                {
+                    error: 'Failed to send invitation email',
+                    details: emailResult.error,
+                },
+                500
+            );
+        }
 
         return c.json({
             success: true,
@@ -1088,7 +1154,37 @@ sharingRoutes.openapi(sendInvitationRoute, async (c) => {
 
     await db.insert(schema.sessionShareInvitations).values(invitation);
 
-    // TODO: Send email (out of scope for HAP-772)
+    // Send invitation email (HAP-866)
+    const inviterName = await getInviterDisplayName(db, userId);
+    const emailResult = await sendInvitationEmail(
+        {
+            RESEND_API_KEY: c.env.RESEND_API_KEY,
+            HAPPY_APP_URL: c.env.HAPPY_APP_URL,
+            ENVIRONMENT: c.env.ENVIRONMENT,
+        },
+        {
+            recipientEmail: normalizedEmail,
+            invitationToken: invitation.token,
+            inviterName,
+            permission: invitation.permission,
+            expiresAt: invitation.expiresAt,
+        }
+    );
+
+    // If email fails, delete the invitation and return error
+    if (!emailResult.success) {
+        await db
+            .delete(schema.sessionShareInvitations)
+            .where(eq(schema.sessionShareInvitations.id, invitation.id));
+
+        return c.json(
+            {
+                error: 'Failed to send invitation email',
+                details: emailResult.error,
+            },
+            500
+        );
+    }
 
     return c.json({
         success: true,

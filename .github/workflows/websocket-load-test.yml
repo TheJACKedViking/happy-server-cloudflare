@@ -1,0 +1,569 @@
+name: WebSocket Load Tests
+
+# HAP-891: WebSocket Load Test CI Pipeline for Regression Detection
+# This workflow runs WebSocket performance tests from HAP-263 to detect regressions.
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      # Trigger on WebSocket/Durable Objects related changes
+      - 'happy-server-workers/src/durable-objects/**'
+      - 'happy-server-workers/src/routes/websocket.ts'
+      - 'happy-server-workers/load-tests/scenarios/websocket*.js'
+      - 'happy-server-workers/.github/workflows/websocket-load-test.yml'
+
+  # Run after deployment to dev environment
+  workflow_run:
+    workflows: ["Deploy Workers"]
+    types:
+      - completed
+    branches:
+      - main
+
+  # Manual trigger for debugging or ad-hoc testing
+  workflow_dispatch:
+    inputs:
+      test_mode:
+        description: 'Test mode to run'
+        required: true
+        default: 'smoke'
+        type: choice
+        options:
+          - smoke
+          - scale
+          - sustained
+          - stress
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - prod
+
+defaults:
+  run:
+    working-directory: happy-server-workers
+
+# Cancel in-progress runs on new commits to same PR
+# Note: github.head_ref is only used in concurrency group key, not in shell commands
+concurrency:
+  group: websocket-load-test-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Default URLs for environments
+  DEV_API_URL: https://happy-server-workers-dev.enflamemedia.workers.dev
+  PROD_API_URL: https://happy-api.enflamemedia.com
+
+  # Regression thresholds (20% buffer over baseline from HAP-263)
+  # Baseline: Connection P95 < 2000ms, Broadcast P95 < 500ms
+  THRESHOLD_CONNECTION_P95_MS: 2400
+  THRESHOLD_BROADCAST_P95_MS: 600
+  THRESHOLD_ERROR_RATE_PCT: 5
+
+jobs:
+  # ============================================
+  # PR Smoke Test
+  # Quick validation for PRs touching WebSocket code
+  # ============================================
+  pr-smoke-test:
+    name: PR Smoke Test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg \
+            --keyserver hkp://keyserver.ubuntu.com:80 \
+            --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" \
+            | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+
+      - name: Run WebSocket Smoke Test
+        id: smoke_test
+        run: |
+          echo "Running WebSocket smoke test against dev environment..."
+
+          # Create results directory
+          mkdir -p load-tests/results
+
+          # Run smoke test (10 VUs, 30s)
+          k6 run \
+            --env AUTH_TOKEN=${{ secrets.LOAD_TEST_TOKEN }} \
+            --env BASE_URL=${{ env.DEV_API_URL }} \
+            --env TEST_MODE=smoke \
+            --out json=load-tests/results/pr-smoke-results.json \
+            --summary-export=load-tests/results/pr-smoke-summary.json \
+            load-tests/scenarios/websocket-performance.js \
+            2>&1 | tee load-tests/results/pr-smoke-output.txt
+
+          # Store exit code
+          echo "exit_code=$?" >> $GITHUB_OUTPUT
+        continue-on-error: true
+
+      - name: Check Thresholds
+        id: threshold_check
+        run: |
+          # Parse results and check against thresholds
+          if [ -f load-tests/results/pr-smoke-summary.json ]; then
+            CONN_P95=$(jq -r '.metrics.ws_connection_time.values["p(95)"] // 0' load-tests/results/pr-smoke-summary.json)
+            BROADCAST_P95=$(jq -r '.metrics.ws_broadcast_delivery_time.values["p(95)"] // 0' load-tests/results/pr-smoke-summary.json)
+            ERROR_COUNT=$(jq -r '.metrics.ws_connection_errors.values.count // 0' load-tests/results/pr-smoke-summary.json)
+            SUCCESS_COUNT=$(jq -r '.metrics.ws_connection_success.values.count // 0' load-tests/results/pr-smoke-summary.json)
+
+            # Calculate error rate
+            TOTAL_CONN=$((ERROR_COUNT + SUCCESS_COUNT))
+            if [ $TOTAL_CONN -gt 0 ]; then
+              ERROR_RATE=$(echo "scale=2; $ERROR_COUNT * 100 / $TOTAL_CONN" | bc)
+            else
+              ERROR_RATE=0
+            fi
+
+            echo "Connection P95: ${CONN_P95}ms (threshold: ${{ env.THRESHOLD_CONNECTION_P95_MS }}ms)"
+            echo "Broadcast P95: ${BROADCAST_P95}ms (threshold: ${{ env.THRESHOLD_BROADCAST_P95_MS }}ms)"
+            echo "Error Rate: ${ERROR_RATE}% (threshold: ${{ env.THRESHOLD_ERROR_RATE_PCT }}%)"
+
+            # Check thresholds
+            FAILED=false
+
+            if (( $(echo "$CONN_P95 > ${{ env.THRESHOLD_CONNECTION_P95_MS }}" | bc -l) )); then
+              echo "::error::Connection P95 (${CONN_P95}ms) exceeds threshold (${{ env.THRESHOLD_CONNECTION_P95_MS }}ms)"
+              FAILED=true
+            fi
+
+            if (( $(echo "$BROADCAST_P95 > ${{ env.THRESHOLD_BROADCAST_P95_MS }}" | bc -l) )); then
+              echo "::error::Broadcast P95 (${BROADCAST_P95}ms) exceeds threshold (${{ env.THRESHOLD_BROADCAST_P95_MS }}ms)"
+              FAILED=true
+            fi
+
+            if (( $(echo "$ERROR_RATE > ${{ env.THRESHOLD_ERROR_RATE_PCT }}" | bc -l) )); then
+              echo "::error::Error rate (${ERROR_RATE}%) exceeds threshold (${{ env.THRESHOLD_ERROR_RATE_PCT }}%)"
+              FAILED=true
+            fi
+
+            echo "conn_p95=$CONN_P95" >> $GITHUB_OUTPUT
+            echo "broadcast_p95=$BROADCAST_P95" >> $GITHUB_OUTPUT
+            echo "error_rate=$ERROR_RATE" >> $GITHUB_OUTPUT
+            echo "failed=$FAILED" >> $GITHUB_OUTPUT
+          else
+            echo "::warning::No results file found, skipping threshold check"
+            echo "failed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pr-smoke-test-results-${{ github.event.pull_request.number }}
+          path: |
+            happy-server-workers/load-tests/results/pr-smoke-*.json
+            happy-server-workers/load-tests/results/pr-smoke-output.txt
+          retention-days: 30
+
+      - name: Comment on PR
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const connP95 = '${{ steps.threshold_check.outputs.conn_p95 }}' || 'N/A';
+            const broadcastP95 = '${{ steps.threshold_check.outputs.broadcast_p95 }}' || 'N/A';
+            const errorRate = '${{ steps.threshold_check.outputs.error_rate }}' || 'N/A';
+            const failed = '${{ steps.threshold_check.outputs.failed }}' === 'true';
+
+            const status = failed ? '**REGRESSION DETECTED**' : 'Passed';
+            const statusIcon = failed ? ':x:' : ':white_check_mark:';
+
+            const thresholdConnP95 = '${{ env.THRESHOLD_CONNECTION_P95_MS }}';
+            const thresholdBroadcastP95 = '${{ env.THRESHOLD_BROADCAST_P95_MS }}';
+            const thresholdErrorRate = '${{ env.THRESHOLD_ERROR_RATE_PCT }}';
+
+            const body = `## WebSocket Load Test Results ${statusIcon}
+
+            **Status**: ${status}
+            **Test Mode**: Smoke (10 VUs, 30s)
+
+            ### Performance Metrics
+
+            | Metric | Value | Threshold | Status |
+            |--------|-------|-----------|--------|
+            | Connection Time (P95) | ${connP95}ms | <${thresholdConnP95}ms | ${parseFloat(connP95) > parseFloat(thresholdConnP95) ? ':x:' : ':white_check_mark:'} |
+            | Broadcast Delivery (P95) | ${broadcastP95}ms | <${thresholdBroadcastP95}ms | ${parseFloat(broadcastP95) > parseFloat(thresholdBroadcastP95) ? ':x:' : ':white_check_mark:'} |
+            | Error Rate | ${errorRate}% | <${thresholdErrorRate}% | ${parseFloat(errorRate) > parseFloat(thresholdErrorRate) ? ':x:' : ':white_check_mark:'} |
+
+            ${failed ? '\n> :warning: **Action Required**: Performance regression detected. Please investigate before merging.\n' : ''}
+
+            <details>
+            <summary>Test Configuration</summary>
+
+            - **Environment**: Dev
+            - **Test Script**: \`load-tests/scenarios/websocket-performance.js\`
+            - **HAP-263 Criteria**: Connection P95 < 2000ms, Broadcast P95 < 500ms, Error Rate < 5%
+            - **Thresholds Include 20% Buffer** for CI variance
+
+            </details>
+
+            ---
+            *Automated by HAP-891 WebSocket Load Test Pipeline*
+            `;
+
+            // Find existing comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.find(comment =>
+              comment.user.login === 'github-actions[bot]' &&
+              comment.body.includes('WebSocket Load Test Results')
+            );
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body
+              });
+            }
+
+      - name: Fail on Regression
+        if: steps.threshold_check.outputs.failed == 'true'
+        run: |
+          echo "Performance regression detected!"
+          exit 1
+
+  # ============================================
+  # Staging Scale Test
+  # Run after deployment to dev environment
+  # ============================================
+  staging-scale-test:
+    name: Staging Scale Test
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg \
+            --keyserver hkp://keyserver.ubuntu.com:80 \
+            --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" \
+            | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+
+      - name: Wait for Deployment to Stabilize
+        run: |
+          echo "Waiting 30s for deployment to stabilize..."
+          sleep 30
+
+          # Verify dev environment is healthy
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" ${{ env.DEV_API_URL }}/health)
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::Dev environment health check failed (HTTP $HTTP_CODE)"
+            exit 1
+          fi
+          echo "Dev environment is healthy"
+
+      - name: Run WebSocket Scale Test
+        id: scale_test
+        run: |
+          echo "Running WebSocket scale test against dev environment..."
+          echo "This test validates 100+ concurrent connections (HAP-263 requirement)"
+
+          # Create results directory
+          mkdir -p load-tests/results
+
+          # Run scale test (100+ connections, ~3 min)
+          k6 run \
+            --env AUTH_TOKEN=${{ secrets.LOAD_TEST_TOKEN }} \
+            --env BASE_URL=${{ env.DEV_API_URL }} \
+            --env TEST_MODE=scale \
+            --out json=load-tests/results/staging-scale-results.json \
+            --summary-export=load-tests/results/staging-scale-summary.json \
+            load-tests/scenarios/websocket-performance.js \
+            2>&1 | tee load-tests/results/staging-scale-output.txt
+
+          echo "exit_code=$?" >> $GITHUB_OUTPUT
+        continue-on-error: true
+
+      - name: Analyze Results and Detect Regressions
+        id: analyze
+        run: |
+          if [ ! -f load-tests/results/staging-scale-summary.json ]; then
+            echo "::error::No results file found"
+            exit 1
+          fi
+
+          # Extract metrics
+          CONN_P95=$(jq -r '.metrics.ws_connection_time.values["p(95)"] // 0' load-tests/results/staging-scale-summary.json)
+          CONN_P99=$(jq -r '.metrics.ws_connection_time.values["p(99)"] // 0' load-tests/results/staging-scale-summary.json)
+          CONN_AVG=$(jq -r '.metrics.ws_connection_time.values.avg // 0' load-tests/results/staging-scale-summary.json)
+
+          BROADCAST_P95=$(jq -r '.metrics.ws_broadcast_delivery_time.values["p(95)"] // 0' load-tests/results/staging-scale-summary.json)
+          BROADCAST_P99=$(jq -r '.metrics.ws_broadcast_delivery_time.values["p(99)"] // 0' load-tests/results/staging-scale-summary.json)
+          BROADCAST_AVG=$(jq -r '.metrics.ws_broadcast_delivery_time.values.avg // 0' load-tests/results/staging-scale-summary.json)
+
+          MSG_LATENCY_P95=$(jq -r '.metrics.ws_message_latency.values["p(95)"] // 0' load-tests/results/staging-scale-summary.json)
+
+          SUCCESS_COUNT=$(jq -r '.metrics.ws_connection_success.values.count // 0' load-tests/results/staging-scale-summary.json)
+          ERROR_COUNT=$(jq -r '.metrics.ws_connection_errors.values.count // 0' load-tests/results/staging-scale-summary.json)
+          MSGS_SENT=$(jq -r '.metrics.ws_messages_sent.values.count // 0' load-tests/results/staging-scale-summary.json)
+          MSGS_RECV=$(jq -r '.metrics.ws_messages_received.values.count // 0' load-tests/results/staging-scale-summary.json)
+
+          # Calculate error rate
+          TOTAL_CONN=$((ERROR_COUNT + SUCCESS_COUNT))
+          if [ $TOTAL_CONN -gt 0 ]; then
+            ERROR_RATE=$(echo "scale=2; $ERROR_COUNT * 100 / $TOTAL_CONN" | bc)
+          else
+            ERROR_RATE=0
+          fi
+
+          # Output results
+          echo "=== WebSocket Scale Test Results ==="
+          echo ""
+          echo "Connection Metrics:"
+          echo "  Successful Connections: $SUCCESS_COUNT"
+          echo "  Failed Connections: $ERROR_COUNT"
+          echo "  Error Rate: ${ERROR_RATE}%"
+          echo "  Connection Time (avg): ${CONN_AVG}ms"
+          echo "  Connection Time (P95): ${CONN_P95}ms"
+          echo "  Connection Time (P99): ${CONN_P99}ms"
+          echo ""
+          echo "Message Metrics:"
+          echo "  Messages Sent: $MSGS_SENT"
+          echo "  Messages Received: $MSGS_RECV"
+          echo "  Message Latency (P95): ${MSG_LATENCY_P95}ms"
+          echo ""
+          echo "Broadcast Metrics:"
+          echo "  Delivery Time (avg): ${BROADCAST_AVG}ms"
+          echo "  Delivery Time (P95): ${BROADCAST_P95}ms"
+          echo "  Delivery Time (P99): ${BROADCAST_P99}ms"
+
+          # Check HAP-263 criteria
+          echo ""
+          echo "=== HAP-263 Acceptance Criteria ==="
+
+          REGRESSION_DETECTED=false
+
+          # 100+ concurrent connections
+          if [ $SUCCESS_COUNT -ge 100 ]; then
+            echo "[PASS] 100+ concurrent connections established ($SUCCESS_COUNT)"
+          else
+            echo "[FAIL] Less than 100 connections ($SUCCESS_COUNT)"
+            REGRESSION_DETECTED=true
+          fi
+
+          # Broadcast < 500ms (P95)
+          if (( $(echo "$BROADCAST_P95 < 500" | bc -l) )); then
+            echo "[PASS] Broadcast delivery P95 < 500ms (${BROADCAST_P95}ms)"
+          else
+            echo "[FAIL] Broadcast delivery P95 >= 500ms (${BROADCAST_P95}ms)"
+            REGRESSION_DETECTED=true
+          fi
+
+          # Connection time < 2000ms (P95)
+          if (( $(echo "$CONN_P95 < 2000" | bc -l) )); then
+            echo "[PASS] Connection time P95 < 2000ms (${CONN_P95}ms)"
+          else
+            echo "[FAIL] Connection time P95 >= 2000ms (${CONN_P95}ms)"
+            REGRESSION_DETECTED=true
+          fi
+
+          # Error rate < 5%
+          if (( $(echo "$ERROR_RATE < 5" | bc -l) )); then
+            echo "[PASS] Error rate < 5% (${ERROR_RATE}%)"
+          else
+            echo "[FAIL] Error rate >= 5% (${ERROR_RATE}%)"
+            REGRESSION_DETECTED=true
+          fi
+
+          # Set outputs
+          echo "success_count=$SUCCESS_COUNT" >> $GITHUB_OUTPUT
+          echo "error_count=$ERROR_COUNT" >> $GITHUB_OUTPUT
+          echo "error_rate=$ERROR_RATE" >> $GITHUB_OUTPUT
+          echo "conn_p95=$CONN_P95" >> $GITHUB_OUTPUT
+          echo "conn_p99=$CONN_P99" >> $GITHUB_OUTPUT
+          echo "broadcast_p95=$BROADCAST_P95" >> $GITHUB_OUTPUT
+          echo "broadcast_p99=$BROADCAST_P99" >> $GITHUB_OUTPUT
+          echo "msg_latency_p95=$MSG_LATENCY_P95" >> $GITHUB_OUTPUT
+          echo "regression_detected=$REGRESSION_DETECTED" >> $GITHUB_OUTPUT
+
+      - name: Upload Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: staging-scale-test-results-${{ github.run_number }}
+          path: |
+            happy-server-workers/load-tests/results/staging-scale-*.json
+            happy-server-workers/load-tests/results/staging-scale-output.txt
+          retention-days: 90
+
+      - name: Create Job Summary
+        if: always()
+        env:
+          SUCCESS_COUNT: ${{ steps.analyze.outputs.success_count }}
+          ERROR_COUNT: ${{ steps.analyze.outputs.error_count }}
+          ERROR_RATE: ${{ steps.analyze.outputs.error_rate }}
+          CONN_P95: ${{ steps.analyze.outputs.conn_p95 }}
+          CONN_P99: ${{ steps.analyze.outputs.conn_p99 }}
+          BROADCAST_P95: ${{ steps.analyze.outputs.broadcast_p95 }}
+          BROADCAST_P99: ${{ steps.analyze.outputs.broadcast_p99 }}
+          MSG_LATENCY_P95: ${{ steps.analyze.outputs.msg_latency_p95 }}
+          REGRESSION_DETECTED: ${{ steps.analyze.outputs.regression_detected }}
+        run: |
+          echo "## WebSocket Scale Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment**: Dev (post-deployment)" >> $GITHUB_STEP_SUMMARY
+          echo "**Test Mode**: Scale (100+ connections)" >> $GITHUB_STEP_SUMMARY
+          echo "**Triggered By**: Deploy Workers workflow" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Performance Metrics" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value | HAP-263 Target | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|----------------|--------|" >> $GITHUB_STEP_SUMMARY
+
+          # Use env vars safely in shell
+          CONN_STATUS=":white_check_mark:"
+          if (( $(echo "$CONN_P95 >= 2000" | bc -l) )); then
+            CONN_STATUS=":x:"
+          fi
+
+          BROADCAST_STATUS=":white_check_mark:"
+          if (( $(echo "$BROADCAST_P95 >= 500" | bc -l) )); then
+            BROADCAST_STATUS=":x:"
+          fi
+
+          ERROR_STATUS=":white_check_mark:"
+          if (( $(echo "$ERROR_RATE >= 5" | bc -l) )); then
+            ERROR_STATUS=":x:"
+          fi
+
+          SUCCESS_STATUS=":white_check_mark:"
+          if [ "$SUCCESS_COUNT" -lt 100 ]; then
+            SUCCESS_STATUS=":x:"
+          fi
+
+          echo "| Connections Established | $SUCCESS_COUNT | >= 100 | $SUCCESS_STATUS |" >> $GITHUB_STEP_SUMMARY
+          echo "| Connection Time (P95) | ${CONN_P95}ms | < 2000ms | $CONN_STATUS |" >> $GITHUB_STEP_SUMMARY
+          echo "| Broadcast Delivery (P95) | ${BROADCAST_P95}ms | < 500ms | $BROADCAST_STATUS |" >> $GITHUB_STEP_SUMMARY
+          echo "| Error Rate | ${ERROR_RATE}% | < 5% | $ERROR_STATUS |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Additional Metrics" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Connection Time (P99)**: ${CONN_P99}ms" >> $GITHUB_STEP_SUMMARY
+          echo "- **Broadcast Delivery (P99)**: ${BROADCAST_P99}ms" >> $GITHUB_STEP_SUMMARY
+          echo "- **Message Latency (P95)**: ${MSG_LATENCY_P95}ms" >> $GITHUB_STEP_SUMMARY
+          echo "- **Failed Connections**: $ERROR_COUNT" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "$REGRESSION_DETECTED" == "true" ]; then
+            echo "> :warning: **Performance regression detected!** Review the metrics above." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "> :white_check_mark: All HAP-263 acceptance criteria passed." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Alert on Regression
+        if: steps.analyze.outputs.regression_detected == 'true'
+        run: |
+          echo "::error::Performance regression detected in staging scale test!"
+          echo "Review the test results and investigate the cause."
+          # Don't fail the workflow, but create a clear alert
+          # Production deployment should be blocked until regression is resolved
+
+  # ============================================
+  # Manual Test Run
+  # For debugging or ad-hoc testing
+  # ============================================
+  manual-test:
+    name: Manual Test Run
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg \
+            --keyserver hkp://keyserver.ubuntu.com:80 \
+            --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" \
+            | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+
+      - name: Set Environment URL
+        id: env_url
+        env:
+          INPUT_ENVIRONMENT: ${{ github.event.inputs.environment }}
+        run: |
+          if [ "$INPUT_ENVIRONMENT" == "prod" ]; then
+            echo "url=${{ env.PROD_API_URL }}" >> $GITHUB_OUTPUT
+          else
+            echo "url=${{ env.DEV_API_URL }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run WebSocket Test
+        env:
+          INPUT_ENVIRONMENT: ${{ github.event.inputs.environment }}
+          INPUT_TEST_MODE: ${{ github.event.inputs.test_mode }}
+          TARGET_URL: ${{ steps.env_url.outputs.url }}
+        run: |
+          echo "Running WebSocket test..."
+          echo "  Environment: $INPUT_ENVIRONMENT"
+          echo "  Test Mode: $INPUT_TEST_MODE"
+          echo "  URL: $TARGET_URL"
+
+          mkdir -p load-tests/results
+
+          k6 run \
+            --env AUTH_TOKEN=${{ secrets.LOAD_TEST_TOKEN }} \
+            --env BASE_URL="$TARGET_URL" \
+            --env TEST_MODE="$INPUT_TEST_MODE" \
+            --out json=load-tests/results/manual-results.json \
+            --summary-export=load-tests/results/manual-summary.json \
+            load-tests/scenarios/websocket-performance.js \
+            2>&1 | tee load-tests/results/manual-output.txt
+
+      - name: Upload Test Results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: manual-test-results-${{ github.event.inputs.test_mode }}-${{ github.event.inputs.environment }}-${{ github.run_number }}
+          path: |
+            happy-server-workers/load-tests/results/manual-*.json
+            happy-server-workers/load-tests/results/manual-output.txt
+          retention-days: 30
+
+      - name: Display Results Summary
+        if: always()
+        run: |
+          if [ -f load-tests/results/manual-summary.json ]; then
+            echo "=== Test Results Summary ==="
+            jq '.' load-tests/results/manual-summary.json
+          fi

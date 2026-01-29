@@ -715,6 +715,10 @@ const TABLE_NAME_MAP: Record<string, string> = {
     serviceAccountTokens: 'AIServiceToken',
     githubUsers: 'GitHubUser',
     uploadedFiles: 'UploadedFile',
+    // Session sharing tables (HAP-772, HAP-866)
+    sessionShares: 'SessionShare',
+    sessionShareUrls: 'SessionShareUrl',
+    sessionShareInvitations: 'SessionShareInvitation',
 };
 
 /**
