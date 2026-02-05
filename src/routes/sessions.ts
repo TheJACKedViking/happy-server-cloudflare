@@ -59,7 +59,15 @@ interface Env {
 const sessionRoutes = new OpenAPIHono<{ Bindings: Env }>();
 
 // Apply auth middleware to all session routes
-sessionRoutes.use('/v1/sessions/*', authMiddleware());
+// HAP-938: Skip auth for /v1/sessions/shared/* paths (public shared session access)
+// The sharing routes module handles its own auth for protected endpoints
+const sessionsAuthMiddleware = authMiddleware();
+sessionRoutes.use('/v1/sessions/*', async (c, next) => {
+    if (c.req.path.startsWith('/v1/sessions/shared/')) {
+        return next();
+    }
+    return sessionsAuthMiddleware(c as never, next);
+});
 sessionRoutes.use('/v2/sessions/*', authMiddleware());
 
 // ============================================================================
